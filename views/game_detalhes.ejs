@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+  <style>
+    /* =========================================
+       KUANDA GAME DETAILS (STEAM/EPIC STYLE)
+       ========================================= */
+    :root {
+      --kg-bg: #09090b;
+      --kg-panel: #18181b;
+      --kg-accent: #E31C25;
+      --kg-neon: #00f2ea;
+      --kg-text: #e4e4e7;
+      --kg-border: #27272a;
+    }
+
+    body { background-color: var(--kg-bg); color: var(--kg-text); font-family: 'Inter', sans-serif; }
+
+    /* 1. HERO BACKDROP (Imersão Total) */
+    .game-backdrop {
+        position: absolute; top: 0; left: 0; width: 100%; height: 600px;
+        z-index: -1; overflow: hidden; mask-image: linear-gradient(to bottom, black 20%, transparent 100%);
+    }
+    .game-backdrop img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(20px) brightness(0.4);
+    transform: scale(1.1);
+    opacity: 0.2; /* 0.0 transparente, 1.0 opaco */
+}
+
+
+    /* 2. LAYOUT GRID */
+    .game-container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; display: grid; grid-template-columns: 2fr 1fr; gap: 40px; }
+
+    /* Lado Esquerdo: Mídia e Info */
+    .game-media { margin-bottom: 40px; }
+    .main-media-frame {
+        aspect-ratio: 16/9; background: black; border-radius: 12px; overflow: hidden;
+        border: 1px solid var(--kg-border); margin-bottom: 15px; position: relative;
+    }
+    .main-media-frame img, .main-media-frame iframe { width: 100%; height: 100%; object-fit: cover; }
+    
+    .screenshots-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px; }
+    .screen-thumb {
+        height: 80px; width: 140px; border-radius: 8px; cursor: pointer; object-fit: cover;
+        border: 2px solid transparent; transition: 0.2s; opacity: 0.6;
+    }
+    .screen-thumb:hover, .screen-thumb.active { border-color: var(--kg-neon); opacity: 1; }
+
+    .game-description { font-size: 1rem; line-height: 1.7; color: #a1a1aa; margin-bottom: 40px; }
+    .game-description h3 { color: white; margin-top: 30px; margin-bottom: 15px; font-weight: 700; }
+
+    /* Requisitos (Estilo Tabela Técnica) */
+    .sys-req-box {
+        background: var(--kg-panel); padding: 25px; border-radius: 12px; border: 1px solid var(--kg-border);
+    }
+    .req-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 0.85rem; }
+    .req-item strong { display: block; color: white; margin-bottom: 4px; }
+    .req-item span { color: #888; }
+
+    /* Lado Direito: Compra e Detalhes (Sticky) */
+    .game-sidebar { position: sticky; top: 100px; height: fit-content; }
+    
+    .game-logo { width: 100%; margin-bottom: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    
+    .game-meta-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .g-tag { background: #27272a; color: #ccc; padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+
+    .buy-card {
+        background: var(--kg-panel); padding: 25px; border-radius: 16px;
+        border: 1px solid var(--kg-border); margin-bottom: 30px;
+    }
+    .game-price-lg { font-size: 2rem; font-weight: 800; color: white; margin-bottom: 5px; }
+    .game-price-sub { color: #888; font-size: 0.9rem; margin-bottom: 20px; }
+    
+    .btn-buy-lg {
+        width: 100%; padding: 15px; border-radius: 8px; border: none;
+        background: var(--kg-accent); color: white; font-weight: 800; font-size: 1rem;
+        text-transform: uppercase; letter-spacing: 1px; cursor: pointer; transition: 0.3s;
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+    .btn-buy-lg:hover { background: #ff1f2d; transform: translateY(-2px); box-shadow: 0 0 20px rgba(227, 28, 37, 0.4); }
+    
+    .btn-download-lg {
+        width: 100%; padding: 15px; border-radius: 8px; border: none;
+        background: var(--kg-neon); color: black; font-weight: 800; text-transform: uppercase;
+        display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none;
+    }
+    .btn-download-lg:hover { background: white; box-shadow: 0 0 20px rgba(0, 242, 234, 0.4); }
+
+    .game-details-list { list-style: none; padding: 0; margin: 0; font-size: 0.9rem; }
+    .game-details-list li {
+        display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #27272a;
+    }
+    .detail-label { color: #666; }
+    .detail-val { color: white; font-weight: 600; text-align: right; }
+
+    /* Responsivo */
+    @media (max-width: 991px) {
+        .game-container { grid-template-columns: 1fr; }
+        .game-sidebar { position: static; }
+        .game-logo { display: none; } /* Capa já aparece no topo em mobile */
+    }
+  </style>
+</head>
+<body>
+
+<!-- Backdrop Blur -->
+<div class="game-backdrop">
+    <% if (jogo.banner) { %>
+        <img src="/uploads/games/<%= jogo.banner %>">
+    <% } else if (jogo.capa) { %>
+        <img src="/uploads/games/<%= jogo.capa %>">
+    <% } else { %>
+        <img src="https://wallpapers.com/images/hd/gaming-background-h1h1h1.jpg">
+    <% } %>
+</div>
+
+<div class="game-container">
+    
+    <!-- LADO ESQUERDO: CONTEÚDO -->
+    <div class="game-content">
+        
+        <!-- Título Mobile -->
+        <h1 class="d-lg-none fw-bold mb-3"><%= jogo.titulo %></h1>
+
+        <!-- Galeria de Mídia -->
+        <div class="game-media">
+            <div class="main-media-frame" id="mainMedia">
+                <!-- Se tiver trailer, mostra ele primeiro, senão banner -->
+                <% if (jogo.trailer_url) { 
+                    const videoId = jogo.trailer_url.split('v=')[1] || jogo.trailer_url.split('/').pop();
+                %>
+                    <iframe src="https://www.youtube.com/embed/<%= videoId %>?autoplay=0&rel=0" frameborder="0" allowfullscreen></iframe>
+                <% } else if (jogo.banner) { %>
+                    <img src="/uploads/games/<%= jogo.banner %>">
+                <% } else { %>
+                     <img src="/uploads/games/<%= jogo.capa %>">
+                <% } %>
+            </div>
+
+            <!-- Screenshots Thumbs -->
+            <% if (jogo.screenshots && jogo.screenshots.length > 0) { %>
+                <div class="screenshots-row">
+                    <% jogo.screenshots.forEach((screen, index) => { %>
+                        <img src="/uploads/games/<%= screen %>" class="screen-thumb" onclick="changeMedia(this.src, 'image')">
+                    <% }) %>
+                    <% if (jogo.trailer_url) { 
+                       const vId = jogo.trailer_url.split('v=')[1] || jogo.trailer_url.split('/').pop();
+                    %>
+                       <img src="https://img.youtube.com/vi/<%= vId %>/mqdefault.jpg" class="screen-thumb" onclick="changeMedia('<%= vId %>', 'video')">
+                    <% } %>
+                </div>
+            <% } %>
+        </div>
+
+        <!-- Descrição -->
+        <div class="game-description">
+            <h3>Sobre o Jogo</h3>
+            <p><%= jogo.descricao || 'Sem descrição disponível.' %></p>
+        </div>
+
+        <!-- Requisitos do Sistema -->
+        <div class="sys-req-box">
+            <h4 class="text-white mb-4"><i class="fas fa-microchip me-2"></i>Requisitos de Sistema</h4>
+            <div class="req-grid">
+                <% 
+                // Tenta fazer parse se for JSON, senão mostra texto puro
+                let reqs = jogo.requisitos; 
+                %>
+                <div class="req-col">
+                    <div class="req-item mb-3">
+                        <strong>Sistema Operativo</strong>
+                        <span><%= reqs || 'Windows 10 / 11 (64-bit)' %></span>
+                    </div>
+                    <div class="req-item mb-3">
+                        <strong>Processador</strong>
+                        <span>Intel Core i5 / AMD Ryzen 5</span>
+                    </div>
+                </div>
+                <div class="req-col">
+                    <div class="req-item mb-3">
+                        <strong>Memória</strong>
+                        <span>16 GB RAM</span>
+                    </div>
+                    <div class="req-item mb-3">
+                        <strong>Placa de Vídeo</strong>
+                        <span>NVIDIA GTX 1060 / RTX 2060</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- LADO DIREITO: COMPRA -->
+    <aside class="game-sidebar">
+        
+        <!-- Logo do Jogo (Capa) -->
+        <img src="/uploads/games/<%= jogo.capa %>" class="game-logo d-none d-lg-block">
+
+        <h1 class="d-none d-lg-block fw-bold mb-3 lh-1"><%= jogo.titulo %></h1>
+        
+        <div class="game-meta-tags">
+            <span class="g-tag"><%= jogo.genero || 'Ação' %></span>
+            <span class="g-tag"><%= jogo.plataforma || 'PC' %></span>
+            <span class="g-tag bg-dark border border-secondary"><%= jogo.classificacao || '12' %>+</span>
+        </div>
+
+        <!-- Card de Compra -->
+        <div class="buy-card">
+            <% if (Number(jogo.preco) === 0) { %>
+                <div class="game-price-lg" style="color: var(--kg-neon)">GRÁTIS</div>
+                <div class="game-price-sub">Jogue agora mesmo</div>
+                <a href="<%= jogo.link_download %>" target="_blank" class="btn-download-lg">
+                    <i class="fas fa-download"></i> Baixar Jogo
+                </a>
+            <% } else { %>
+                <div class="game-price-lg"><%= Number(jogo.preco).toLocaleString('pt-AO') %> Kz</div>
+                <div class="game-price-sub">Chave Digital Original</div>
+                <button onclick="buyGame('<%= jogo.titulo %>', '<%= jogo.preco %>')" class="btn-buy-lg">
+                    <i class="fas fa-shopping-cart"></i> Comprar Agora
+                </button>
+            <% } %>
+        </div>
+
+        <!-- Detalhes Técnicos -->
+        <ul class="game-details-list">
+            <li>
+                <span class="detail-label">Desenvolvedor</span>
+                <span class="detail-val"><%= jogo.desenvolvedor || 'Kuanda Games' %></span>
+            </li>
+            <li>
+                <span class="detail-label">Lançamento</span>
+                <span class="detail-val"><%= new Date(jogo.created_at).toLocaleDateString('pt-BR') %></span>
+            </li>
+            <li>
+                <span class="detail-label">Plataforma</span>
+                <span class="detail-val"><%= jogo.plataforma %></span>
+            </li>
+        </ul>
+
+    </aside>
+
+</div>
+
+<script>
+    // Troca de Mídia (Video/Imagem)
+    function changeMedia(source, type) {
+        const container = document.getElementById('mainMedia');
+        if (type === 'video') {
+            container.innerHTML = `<iframe src="https://www.youtube.com/embed/${source}?autoplay=1" frameborder="0" allowfullscreen></iframe>`;
+        } else {
+            container.innerHTML = `<img src="${source}">`;
+        }
+        
+        // Atualiza classe active
+        document.querySelectorAll('.screen-thumb').forEach(el => el.classList.remove('active'));
+        event.target.classList.add('active');
+    }
+
+    // Compra WhatsApp
+    const ADMIN_PHONE = "244900000000";
+    function buyGame(titulo, preco) {
+        const user = '<%= user ? user.nome : "Visitante" %>';
+        const msg = `Olá! Quero comprar a chave do jogo *${titulo}* (${preco} Kz).\n\nUser: ${user}`;
+        window.open(`https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
+    }
+</script>
+
+</body>
+</html>

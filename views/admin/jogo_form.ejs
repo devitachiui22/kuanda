@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* =========================================
+           KUANDA GAME STUDIO CSS
+           ========================================= */
+        :root {
+            --g-bg: #09090b;
+            --g-card: #18181b;
+            --g-border: #27272a;
+            --g-input: #000000;
+            --g-accent: #E31C25; /* Vermelho Kuanda */
+            --g-neon: #00f2ea;   /* Ciano Gamer */
+            --g-text: #e4e4e7;
+            --radius: 16px;
+        }
+
+        body { background-color: #F3F4F6; } /* Fundo da página externa */
+
+        /* Container Principal */
+        .game-studio-wrapper {
+            background-color: var(--g-bg);
+            color: var(--g-text);
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            margin-top: 20px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            border: 1px solid var(--g-border);
+        }
+
+        /* Header */
+        .studio-header {
+            padding: 30px;
+            border-bottom: 1px solid var(--g-border);
+            display: flex; justify-content: space-between; align-items: center;
+            background: linear-gradient(90deg, rgba(227,28,37,0.1) 0%, transparent 100%);
+        }
+        .studio-title {
+            font-size: 1.8rem; font-weight: 800; letter-spacing: -1px; margin: 0;
+            display: flex; align-items: center; gap: 12px;
+        }
+        .btn-back {
+            background: rgba(255,255,255,0.1); color: white; padding: 10px 20px;
+            border-radius: 50px; font-weight: 600; text-decoration: none; transition: 0.2s;
+            font-size: 0.9rem;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.2); color: white; }
+
+        /* Grid Layout */
+        .studio-grid {
+            display: grid; grid-template-columns: 1.5fr 1fr;
+        }
+        
+        .form-pane { padding: 40px; border-right: 1px solid var(--g-border); }
+        .preview-pane {
+            padding: 40px; background: radial-gradient(circle at center, #1f1f22 0%, #09090b 100%);
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+        }
+
+        /* Inputs Gamer Style */
+        .form-group { margin-bottom: 25px; }
+        .g-label {
+            font-size: 0.75rem; font-weight: 700; color: #a1a1aa; text-transform: uppercase;
+            letter-spacing: 1px; margin-bottom: 8px; display: block;
+        }
+        
+        .g-input {
+            width: 100%; padding: 14px 18px; border-radius: 12px;
+            background: var(--g-input); border: 1px solid var(--g-border);
+            color: white; font-weight: 500; outline: none; transition: 0.3s;
+            font-family: monospace;
+        }
+        .g-input:focus { border-color: var(--g-neon); box-shadow: 0 0 15px rgba(0, 242, 234, 0.1); }
+        
+        .g-textarea { resize: vertical; min-height: 120px; line-height: 1.6; }
+
+        /* Upload Zone */
+        .cover-upload {
+            width: 100%; aspect-ratio: 2/3; max-width: 200px;
+            border: 2px dashed var(--g-border); border-radius: 16px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            cursor: pointer; transition: 0.3s; background: rgba(255,255,255,0.03);
+            margin-bottom: 20px;
+        }
+        .cover-upload:hover { border-color: var(--g-accent); background: rgba(227,28,37,0.1); }
+        .cover-icon { font-size: 2rem; color: #555; margin-bottom: 10px; }
+        
+        /* Preview Card (O mesmo visual da loja) */
+        .game-card-preview {
+            width: 260px; height: 380px; border-radius: 16px; overflow: hidden;
+            position: relative; background: #000;
+            box-shadow: 0 0 40px rgba(0,0,0,0.5); border: 1px solid var(--g-border);
+            transition: 0.3s;
+        }
+        .prev-img { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+        .prev-overlay {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: linear-gradient(to top, black 20%, transparent);
+            padding: 20px;
+        }
+        .prev-title { color: white; font-weight: 800; font-size: 1.2rem; margin-bottom: 5px; line-height: 1.1; text-shadow: 0 2px 4px black; }
+        .prev-price { color: var(--g-neon); font-weight: 800; font-size: 1.1rem; }
+        
+        .prev-platform {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(0,0,0,0.8); color: white; padding: 4px 8px; border-radius: 6px;
+            font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+            border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(4px);
+        }
+
+        /* Botão Salvar (Neon) */
+        .btn-save-game {
+            width: 100%; background: var(--g-accent); color: white; border: none;
+            padding: 16px; border-radius: 50px; font-weight: 800; font-size: 1rem; text-transform: uppercase;
+            margin-top: 30px; cursor: pointer; transition: 0.3s; letter-spacing: 1px;
+            box-shadow: 0 0 20px rgba(227, 28, 37, 0.4);
+        }
+        .btn-save-game:hover { background: #ff1f2d; box-shadow: 0 0 40px rgba(227, 28, 37, 0.6); transform: translateY(-2px); }
+
+        /* Switch Status */
+        .switch-row { display: flex; align-items: center; justify-content: space-between; background: #121212; padding: 15px; border-radius: 12px; border: 1px solid var(--g-border); }
+        .switch { position: relative; display: inline-block; width: 50px; height: 26px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--g-neon); }
+        input:checked + .slider:before { transform: translateX(24px); }
+
+        @media (max-width: 991px) {
+            .studio-grid { grid-template-columns: 1fr; }
+            .form-pane { border-right: none; border-bottom: 1px solid var(--g-border); }
+            .preview-pane { order: -1; padding: 40px 20px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container py-5">
+    <div class="card border-0 shadow-lg" style="border-radius: 15px; overflow: hidden;">
+        <div class="card-header bg-dark text-white p-4">
+            <h3 class="mb-0"><i class="fas fa-gamepad me-2"></i>Cadastro de Jogo Completo</h3>
+        </div>
+        <div class="card-body p-4 bg-light">
+            
+            <form action="<%= action %>" method="POST" enctype="multipart/form-data">
+                
+                <!-- 1. Informações Principais -->
+                <h5 class="text-uppercase text-muted fw-bold mb-3 border-bottom pb-2">Dados do Jogo</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-8">
+                        <label class="form-label fw-bold">Título do Jogo</label>
+                        <input type="text" name="titulo" class="form-control form-control-lg" value="<%= jogo ? jogo.titulo : '' %>" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Desenvolvedora</label>
+                        <input type="text" name="desenvolvedor" class="form-control form-control-lg" value="<%= jogo ? jogo.desenvolvedor : '' %>">
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Preço (Kz)</label>
+                        <div class="input-group">
+                            <input type="number" name="preco" class="form-control" value="<%= jogo ? jogo.preco : '' %>" placeholder="0 = Grátis">
+                            <span class="input-group-text">Kz</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Gênero</label>
+                        <select name="genero" class="form-select">
+                            <option value="Ação">Ação</option>
+                            <option value="Aventura">Aventura</option>
+                            <option value="RPG">RPG</option>
+                            <option value="Estratégia">Estratégia</option>
+                            <option value="Esporte">Esporte</option>
+                            <option value="Corrida">Corrida</option>
+                            <option value="Terror">Terror</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Classificação</label>
+                        <select name="classificacao" class="form-select">
+                            <option value="L">Livre</option>
+                            <option value="10">10+</option>
+                            <option value="12">12+</option>
+                            <option value="14">14+</option>
+                            <option value="16">16+</option>
+                            <option value="18">18+</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 2. Mídia -->
+                <h5 class="text-uppercase text-muted fw-bold mb-3 border-bottom pb-2">Mídia & Visual</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Capa (Vertical)</label>
+                        <input type="file" name="capa" class="form-control" accept="image/*" <%= jogo ? '' : 'required' %>>
+                        <div class="form-text">Recomendado: 600x900px</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Banner (Horizontal)</label>
+                        <input type="file" name="banner" class="form-control" accept="image/*">
+                        <div class="form-text">Para o destaque (Hero)</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Screenshots (Até 4)</label>
+                        <input type="file" name="screenshots" class="form-control" accept="image/*" multiple>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Trailer (YouTube URL)</label>
+                        <input type="url" name="trailer_url" class="form-control" value="<%= jogo ? jogo.trailer_url : '' %>">
+                    </div>
+                </div>
+
+                <!-- 3. Links e Detalhes -->
+                <h5 class="text-uppercase text-muted fw-bold mb-3 border-bottom pb-2">Técnico</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Plataforma / Loja</label>
+                        <select name="plataforma" class="form-select">
+                            <option value="STEAM">Steam</option>
+                            <option value="EPIC">Epic Games</option>
+                            <option value="XBOX">Xbox</option>
+                            <option value="PSN">PlayStation</option>
+                            <option value="PC">PC (Direto)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Link Download (Se Grátis)</label>
+                        <input type="text" name="link_download" class="form-control" value="<%= jogo ? jogo.link_download : '' %>">
+                    </div>
+                    
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Descrição</label>
+                        <textarea name="descricao" class="form-control" rows="4"><%= jogo ? jogo.descricao : '' %></textarea>
+                    </div>
+                    
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Requisitos de Sistema</label>
+                        <textarea name="requisitos" class="form-control" rows="3" placeholder="OS: Windows 10, RAM: 8GB..."><%= jogo ? jogo.requisitos : '' %></textarea>
+                    </div>
+                </div>
+
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" name="ativo" id="ativo" <%= (!jogo || jogo.ativo) ? 'checked' : '' %>>
+                    <label class="form-check-label fw-bold" for="ativo">Publicar na Loja</label>
+                </div>
+
+                <button type="submit" class="btn btn-dark w-100 py-3 fw-bold text-uppercase">
+                    <i class="fas fa-save me-2"></i> Salvar Jogo
+                </button>
+
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 1. Preview da Imagem
+    function previewFile(input) {
+        const file = input.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = document.getElementById('prevImg');
+                const placeholder = document.getElementById('placeholderImg');
+                
+                img.src = e.target.result;
+                img.style.display = 'block';
+                if(placeholder) placeholder.style.display = 'none';
+            }
+            reader.readAsDataURL(file);
+        }
+    }
+
+    // 2. Live Update (Texto e Plataforma)
+    function updatePreview() {
+        // Título
+        const title = document.getElementById('titulo').value;
+        document.getElementById('prevTitle').textContent = title || 'Nome do Jogo';
+
+        // Preço
+        const price = document.getElementById('preco').value;
+        const priceEl = document.getElementById('prevPrice');
+        if (!price || parseFloat(price) === 0) {
+            priceEl.textContent = 'GRÁTIS';
+            priceEl.style.color = '#00f2ea'; // Neon Cyan
+        } else {
+            priceEl.textContent = parseFloat(price).toLocaleString('pt-AO') + ' Kz';
+            priceEl.style.color = '#E31C25'; // Red
+        }
+
+        // Plataforma
+        const plat = document.getElementById('plataforma').value;
+        const platEl = document.getElementById('prevPlat');
+        
+        let icon = 'desktop';
+        if (plat === 'STEAM') icon = 'steam';
+        if (plat === 'XBOX') icon = 'xbox';
+        if (plat === 'PSN') icon = 'playstation';
+        if (plat === 'B.NET') icon = 'battle-net';
+
+        platEl.innerHTML = `<i class="fab fa-${icon}"></i> ${plat}`;
+    }
+
+    // 3. Toggle Status Text
+    function toggleStatus() {
+        const checked = document.getElementById('ativo').checked;
+        const txt = document.getElementById('statusText');
+        txt.textContent = checked ? 'Visível para todos' : 'Oculto na loja';
+        txt.className = checked ? 'small text-success fw-bold' : 'small text-muted';
+    }
+
+    // Inicializar
+    document.addEventListener('DOMContentLoaded', () => {
+        // Run once
+        toggleStatus();
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,447 @@
+<style>
+  /* =========================================
+     KUANDA PROFILE SYSTEM
+     ========================================= */
+  
+  /* Variáveis Locais (Herda do Layout, mas reforça aqui) */
+  :root {
+    --k-red: #E31C25;
+    --k-black: #0F0F0F;
+    --glass-bg: #FFFFFF;
+    --glass-border: 1px solid rgba(0,0,0,0.05);
+  }
+
+  /* Card Principal */
+  .profile-card {
+    background: var(--glass-bg);
+    border: var(--glass-border);
+    border-radius: 32px;
+    box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 40px;
+  }
+
+  /* Capa Decorativa (Gradiente) */
+  .profile-cover {
+    height: 180px;
+    background: linear-gradient(135deg, #2a2a2a 0%, #111 100%);
+    position: relative;
+  }
+  .profile-cover::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background-image: radial-gradient(circle at 90% 80%, rgba(227, 28, 37, 0.2) 0%, transparent 40%);
+  }
+
+  /* Container da Foto */
+  .profile-avatar-container {
+    margin-top: -90px;
+    position: relative;
+    display: inline-block;
+  }
+
+  .profile-img-box {
+    width: 160px; height: 160px;
+    border-radius: 50%;
+    border: 5px solid #FFFFFF;
+    background: #FFFFFF;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .profile-img-box img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+
+  /* Botão da Câmera (Floating) */
+  .btn-camera {
+    position: absolute; bottom: 5px; right: 5px;
+    width: 45px; height: 45px;
+    border-radius: 50%;
+    background: var(--k-red);
+    color: white;
+    border: 3px solid #FFFFFF;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    transition: transform 0.2s;
+  }
+  .btn-camera:hover { transform: scale(1.1); }
+
+  /* Inputs Customizados (Design System) */
+  .form-label-custom {
+    font-size: 0.75rem; font-weight: 700; color: #6B7280; 
+    margin-bottom: 6px; display: block; margin-left: 5px; 
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .custom-input-group {
+    background: #F3F4F6; border-radius: 16px; border: 2px solid transparent;
+    padding: 8px 12px; display: flex; align-items: center; transition: all 0.3s ease;
+    margin-bottom: 20px;
+  }
+  .custom-input-group:focus-within {
+    background: #FFFFFF; border-color: var(--k-black); 
+    box-shadow: 0 0 0 4px rgba(0,0,0,0.05);
+  }
+  .custom-input-group.disabled {
+    background: #F9FAFB; opacity: 0.7; cursor: not-allowed;
+  }
+
+  .input-icon { width: 30px; text-align: center; color: #9CA3AF; font-size: 1rem; }
+  .custom-input-group:focus-within .input-icon { color: var(--k-black); }
+
+  .form-control-custom {
+    border: none; background: transparent; height: 100%; width: 100%;
+    color: #1F2937; font-weight: 600; outline: none; padding-left: 10px;
+  }
+  .form-control-custom::placeholder { color: #9CA3AF; font-weight: 400; }
+
+  /* Seção Vendedor */
+  .vendor-section {
+    background: #FFF9F9; /* Leve tom avermelhado */
+    border: 1px dashed #E31C25;
+    border-radius: 20px;
+    padding: 25px;
+    margin-top: 20px;
+  }
+  .vendor-badge {
+    background: linear-gradient(135deg, #FFC107, #FF9800);
+    color: #000; padding: 5px 12px; border-radius: 20px;
+    font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+    display: inline-block; margin-bottom: 10px;
+  }
+
+  /* Botões de Ação */
+  .action-bar {
+    background: white;
+    border-top: 1px solid #F3F4F6;
+    padding: 20px 30px;
+    display: flex; gap: 15px; justify-content: flex-end;
+  }
+  
+  .btn-save {
+    background: var(--k-black); color: white;
+    padding: 12px 30px; border-radius: 12px; font-weight: 600; border: none;
+    transition: 0.3s;
+  }
+  .btn-save:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.15); background: #333; }
+  
+  .btn-cancel {
+    background: white; color: #666; border: 1px solid #ddd;
+    padding: 12px 25px; border-radius: 12px; font-weight: 600;
+    transition: 0.3s;
+  }
+  .btn-cancel:hover { background: #f5f5f5; color: #333; }
+  
+  /* Switch Checkbox Custom */
+  .custom-switch {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    padding: 10px 15px; background: #FEF2F2; border-radius: 12px;
+    color: #DC2626; font-size: 0.85rem; font-weight: 600; width: fit-content; margin: 10px auto 0;
+  }
+  .custom-switch:hover { background: #FEE2E2; }
+  
+</style>
+
+<div class="container py-4">
+    
+    <!-- Título da Página -->
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <div>
+            <h2 class="fw-bold mb-0">Meu Perfil</h2>
+            <p class="text-muted mb-0">Gerencie suas informações pessoais e segurança.</p>
+        </div>
+        <% if (usuario.tipo === 'vendedor') { %>
+            <div class="d-none d-md-block">
+                <span class="badge bg-dark px-3 py-2 rounded-pill"><i class="fas fa-store me-2"></i>Conta Vendedor</span>
+            </div>
+        <% } %>
+    </div>
+
+    <!-- Feedback Messages -->
+    <% if (messages.error) { %>
+        <div class="alert alert-danger border-0 shadow-sm rounded-4 mb-4 d-flex align-items-center">
+            <i class="fas fa-exclamation-circle fs-4 me-3"></i>
+            <div><%= messages.error %></div>
+        </div>
+    <% } %>
+    
+    <% if (messages.success) { %>
+        <div class="alert alert-success border-0 shadow-sm rounded-4 mb-4 d-flex align-items-center">
+            <i class="fas fa-check-circle fs-4 me-3"></i>
+            <div><%= messages.success %></div>
+        </div>
+    <% } %>
+
+    <!-- Card Principal -->
+    <div class="profile-card">
+        
+        <!-- Formulário Oficial -->
+        <form action="/perfil/atualizar" method="POST" enctype="multipart/form-data" id="profileForm">
+            
+            <!-- Capa e Foto -->
+            <div class="profile-cover"></div>
+            
+            <div class="text-center px-4">
+                <div class="profile-avatar-container">
+                    
+                    <!-- Lógica da Foto -->
+                    <% 
+                    let fotoPerfilUrl = '';
+                    if (usuario.foto_perfil && usuario.foto_perfil.trim() !== '') {
+                      if (usuario.foto_perfil.startsWith('/') || usuario.foto_perfil.startsWith('http')) {
+                        fotoPerfilUrl = usuario.foto_perfil;
+                      } else {
+                        fotoPerfilUrl = '/uploads/perfil/' + usuario.foto_perfil;
+                      }
+                    }
+                    %>
+
+                    <div class="profile-img-box">
+                        <% if (fotoPerfilUrl) { %>
+                            <img src="<%= fotoPerfilUrl %>" id="profilePreview" 
+                                 onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name=<%= (usuario.nome || 'U').charAt(0) %>&background=0F0F0F&color=fff&size=200&font-size=0.5';">
+                        <% } else { %>
+                            <div class="d-flex align-items-center justify-content-center bg-dark text-white w-100 h-100">
+                                <span class="fw-bold" style="font-size: 3.5rem;"><%= (usuario.nome || 'U').charAt(0).toUpperCase() %></span>
+                            </div>
+                            <!-- Imagem oculta para preview JS funcionar -->
+                            <img src="" id="profilePreview" style="display:none;" class="w-100 h-100 object-fit-cover">
+                        <% } %>
+                    </div>
+
+                    <!-- Botão Upload -->
+                    <label for="foto_perfil" class="btn-camera" title="Alterar Foto">
+                        <i class="fas fa-camera"></i>
+                        <input type="file" class="d-none" id="foto_perfil" name="foto_perfil" accept="image/*">
+                    </label>
+
+                </div>
+
+                <!-- Opção Remover Foto -->
+                <% if (fotoPerfilUrl) { %>
+                    <div class="mt-2">
+                        <label class="custom-switch">
+                            <input type="checkbox" class="form-check-input mt-0" id="remover_foto" name="remover_foto" value="1">
+                            <span>Remover foto atual</span>
+                        </label>
+                    </div>
+                <% } %>
+                
+                <h3 class="fw-bold mt-3"><%= usuario.nome %></h3>
+                <p class="text-muted"><%= usuario.email %></p>
+            </div>
+
+            <!-- Dados do Formulário -->
+            <div class="p-4 p-md-5">
+                <div class="row g-4">
+                    
+                    <!-- Coluna Esquerda: Dados Pessoais -->
+                    <div class="col-lg-6">
+                        <h5 class="fw-bold mb-4 border-bottom pb-2">Dados Pessoais</h5>
+                        
+                        <div class="mb-3">
+                            <label for="nome" class="form-label-custom">NOME COMPLETO</label>
+                            <div class="custom-input-group">
+                                <span class="input-icon"><i class="fas fa-user"></i></span>
+                                <input type="text" class="form-control-custom" id="nome" name="nome" value="<%= usuario.nome || '' %>" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="email" class="form-label-custom">EMAIL (NÃO EDITÁVEL)</label>
+                            <div class="custom-input-group disabled">
+                                <span class="input-icon"><i class="fas fa-envelope"></i></span>
+                                <input type="email" class="form-control-custom" value="<%= usuario.email || '' %>" disabled>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-7">
+                                <label for="telefone" class="form-label-custom">TELEFONE</label>
+                                <div class="custom-input-group">
+                                    <span class="input-icon"><i class="fas fa-phone"></i></span>
+                                    <input type="tel" class="form-control-custom" id="telefone" name="telefone" value="<%= usuario.telefone || '' %>" placeholder="+244 ...">
+                                </div>
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label-custom">TIPO CONTA</label>
+                                <div class="custom-input-group disabled">
+                                    <span class="input-icon"><i class="fas fa-id-badge"></i></span>
+                                    <input type="text" class="form-control-custom" value="<%= usuario.tipo === 'vendedor' ? 'Vendedor' : usuario.tipo === 'admin' ? 'Admin' : 'Cliente' %>" disabled>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Coluna Direita: Lógica Vendedor ou Info -->
+                    <div class="col-lg-6">
+                        <% if (usuario.tipo === 'vendedor') { %>
+                            <div class="vendor-section">
+                                <div class="d-flex align-items-center justify-content-between mb-3">
+                                    <h5 class="fw-bold mb-0 text-danger">Informações da Loja</h5>
+                                    <span class="vendor-badge">Business</span>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="nome_loja" class="form-label-custom text-danger">NOME DA LOJA</label>
+                                    <div class="custom-input-group bg-white border-danger border border-opacity-25">
+                                        <span class="input-icon"><i class="fas fa-store text-danger"></i></span>
+                                        <input type="text" class="form-control-custom" id="nome_loja" name="nome_loja" value="<%= usuario.nome_loja || '' %>" required>
+                                    </div>
+                                </div>
+
+                                <div class="mb-0">
+                                    <label for="descricao_loja" class="form-label-custom text-danger">DESCRIÇÃO E BIO</label>
+                                    <div class="custom-input-group bg-white align-items-start p-3 border-danger border border-opacity-25">
+                                        <span class="input-icon mt-1"><i class="fas fa-align-left text-danger"></i></span>
+                                        <textarea class="form-control-custom" id="descricao_loja" name="descricao_loja" rows="4" style="height: auto; resize: none;" maxlength="500" placeholder="Conte aos clientes sobre sua loja..."><%= usuario.descricao_loja || '' %></textarea>
+                                    </div>
+                                    <div class="text-end mt-1">
+                                        <span class="badge bg-light text-dark border"><span id="descricaoCounter">0</span>/500</span>
+                                    </div>
+                                </div>
+                            </div>
+                        <% } else { %>
+                            <!-- Placeholder visual para clientes comuns para balancear a tela -->
+                            <div class="h-100 d-flex flex-column justify-content-center align-items-center text-center p-4 bg-light rounded-4 border border-dashed">
+                                <div class="mb-3 bg-white p-3 rounded-circle shadow-sm text-warning">
+                                    <i class="fas fa-star fa-3x"></i>
+                                </div>
+                                <h5 class="fw-bold">Benefícios da Conta</h5>
+                                <p class="text-muted small mb-3">Como cliente KuandaShop, você tem acesso a ofertas exclusivas, rastreio de pedidos em tempo real e suporte prioritário.</p>
+                                <a href="/" class="btn btn-outline-dark btn-sm rounded-pill px-4">Ir às Compras</a>
+                            </div>
+                        <% } %>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Campo Oculto Foto Atual -->
+            <input type="hidden" name="foto_atual" value="<%= usuario.foto_perfil || '' %>">
+
+            <!-- Barra de Ação -->
+            <div class="action-bar">
+                <a href="/" class="btn-cancel">Cancelar</a>
+                <button type="submit" class="btn-save" id="submitBtn">
+                    <i class="fas fa-check me-2"></i>Salvar Alterações
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    
+    // 1. Preview de Imagem (Lógica Robusta)
+    const fileInput = document.getElementById('foto_perfil');
+    const profilePreview = document.getElementById('profilePreview');
+    const imgBox = document.querySelector('.profile-img-box');
+
+    fileInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      
+      if (file) {
+        // Validação Tamanho
+        if (file.size > 5 * 1024 * 1024) {
+          alert('A imagem é muito grande. Máximo 5MB.');
+          this.value = '';
+          return;
+        }
+        
+        // Validação Tipo
+        const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+          alert('Formato inválido. Use JPG ou PNG.');
+          this.value = '';
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          // Se o preview original era uma DIV (placeholder), substitui por IMG
+          if (profilePreview.tagName !== 'IMG' || profilePreview.style.display === 'none') {
+            imgBox.innerHTML = `<img src="${evt.target.result}" id="profilePreview" class="w-100 h-100 object-fit-cover">`;
+          } else {
+            profilePreview.src = evt.target.result;
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // 2. Contador de Caracteres (Vendedor)
+    const descInput = document.getElementById('descricao_loja');
+    const counter = document.getElementById('descricaoCounter');
+    
+    if (descInput && counter) {
+      const updateCounter = () => {
+        counter.textContent = descInput.value.length;
+        if (descInput.value.length >= 500) counter.classList.add('text-danger');
+        else counter.classList.remove('text-danger');
+      };
+      // Inicializar
+      updateCounter();
+      descInput.addEventListener('input', updateCounter);
+    }
+
+    // 3. Formatação Telefone (AO)
+    const phoneInput = document.getElementById('telefone');
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function(e) {
+            let val = e.target.value.replace(/\D/g, ''); // Remove tudo que não é dígito
+            if (val.length > 0 && !val.startsWith('244')) val = '244' + val; // Adiciona prefixo se faltar
+            e.target.value = '+' + val;
+        });
+    }
+
+    // 4. Submit UX
+    const form = document.getElementById('profileForm');
+    form.addEventListener('submit', function(e) {
+        const btn = document.getElementById('submitBtn');
+        const nome = document.getElementById('nome').value.trim();
+        
+        if (!nome) {
+            e.preventDefault();
+            alert('Por favor, informe seu nome.');
+            return;
+        }
+
+        // Validação específica para Vendedor
+        <% if (usuario.tipo === 'vendedor') { %>
+            const loja = document.getElementById('nome_loja').value.trim();
+            if (!loja) {
+                e.preventDefault();
+                alert('O nome da loja é obrigatório.');
+                return;
+            }
+        <% } %>
+
+        // Loading State
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Salvando...';
+        btn.style.opacity = '0.8';
+        btn.disabled = true;
+    });
+
+    // 5. Checkbox Remover Foto
+    const removeCheck = document.getElementById('remover_foto');
+    if(removeCheck) {
+        removeCheck.addEventListener('change', function() {
+            if(this.checked) {
+                fileInput.value = '';
+                fileInput.disabled = true;
+                imgBox.style.opacity = '0.3';
+            } else {
+                fileInput.disabled = false;
+                imgBox.style.opacity = '1';
+            }
+        });
+    }
+
+  });
+</script>
