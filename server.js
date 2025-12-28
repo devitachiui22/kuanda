@@ -9,7 +9,6 @@ const bcrypt = require('bcryptjs');
 const db = require('./config/database');
 const expressLayouts = require('express-ejs-layouts');
 const fs = require('fs');
-const { Pool } = require('pg');
 require('dotenv').config();
 
 const app = express();
@@ -21,7 +20,8 @@ const uploadDirs = [
   'public/uploads/banners',
   'public/uploads/filmes',
   'public/uploads/produtos',
-  'public/uploads/perfil'
+  'public/uploads/perfil',
+  'public/uploads/games'
 ];
 
 uploadDirs.forEach(dir => {
@@ -239,6 +239,122 @@ const requireAdmin = (req, res, next) => {
   }
   next();
 };
+
+// ==================== VERIFICAÇÃO DO BANCO DE DADOS ====================
+const verificarBancoDados = async () => {
+  try {
+    console.log('🔄 Verificando banco de dados...');
+    
+    // Verificar se a tabela usuarios tem a coluna plano_id
+    const verificarColuna = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'usuarios' 
+      AND column_name = 'plano_id'
+    `);
+    
+    if (verificarColuna.rows.length === 0) {
+      console.log('⚠️  Coluna plano_id não encontrada na tabela usuarios. Adicionando...');
+      
+      // Adicionar coluna plano_id se não existir
+      await db.query(`
+        ALTER TABLE usuarios 
+        ADD COLUMN IF NOT EXISTS plano_id INTEGER,
+        ADD COLUMN IF NOT EXISTS limite_produtos INTEGER DEFAULT 10
+      `);
+      
+      console.log('✅ Coluna plano_id adicionada com sucesso!');
+    } else {
+      console.log('✅ Coluna plano_id já existe na tabela usuarios');
+    }
+    
+    // Verificar se a tabela planos_vendedor existe
+    const verificarTabelaPlanos = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'planos_vendedor'
+      )
+    `);
+    
+    if (!verificarTabelaPlanos.rows[0].exists) {
+      console.log('⚠️  Tabela planos_vendedor não encontrada. Criando...');
+      
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS planos_vendedor (
+          id SERIAL PRIMARY KEY,
+          nome VARCHAR(100) NOT NULL,
+          limite_produtos INTEGER NOT NULL DEFAULT 10,
+          preco_mensal DECIMAL(10,2) DEFAULT 0.00,
+          permite_vip BOOLEAN DEFAULT false,
+          permite_destaque BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      console.log('✅ Tabela planos_vendedor criada com sucesso!');
+      
+      // Criar planos padrão
+      await db.query(`
+        INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque) VALUES
+        ('Básico', 10, 0.00, false, false),
+        ('Pro', 50, 99.90, true, true),
+        ('Premium', 200, 299.90, true, true),
+        ('Enterprise', 1000, 999.90, true, true)
+        ON CONFLICT DO NOTHING
+      `);
+      
+      console.log('✅ Planos padrão criados com sucesso!');
+    }
+    
+    // Verificar se tabela jogos existe
+    const verificarTabelaJogos = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'jogos'
+      )
+    `);
+    
+    if (!verificarTabelaJogos.rows[0].exists) {
+      console.log('⚠️  Tabela jogos não encontrada. Criando...');
+      
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS jogos (
+          id SERIAL PRIMARY KEY,
+          titulo VARCHAR(200) NOT NULL,
+          capa VARCHAR(255) NOT NULL,
+          banner VARCHAR(255),
+          screenshots TEXT[] DEFAULT ARRAY[]::TEXT[],
+          preco DECIMAL(10,2) DEFAULT 0.00,
+          plataforma VARCHAR(50),
+          genero VARCHAR(100),
+          link_download TEXT,
+          trailer_url TEXT,
+          descricao TEXT,
+          requisitos TEXT,
+          desenvolvedor VARCHAR(100),
+          classificacao VARCHAR(10),
+          ativo BOOLEAN DEFAULT true,
+          vendas_count INTEGER DEFAULT 0,
+          downloads_count INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      console.log('✅ Tabela jogos criada com sucesso!');
+    }
+    
+    console.log('✅ Banco de dados verificado e pronto para produção!');
+  } catch (error) {
+    console.error('❌ Erro ao verificar banco de dados:', error);
+  }
+};
+
+// Executar verificação do banco
+verificarBancoDados();
 
 // ==================== ROTAS PÚBLICAS ====================
 app.get('/', async (req, res) => {
@@ -736,8 +852,8 @@ app.post('/login', async (req, res) => {
       loja_ativa: user.loja_ativa,
       foto_perfil: user.foto_perfil,
       telefone: user.telefone,
-      plano_id: user.plano_id,
-      limite_produtos: user.limite_produtos
+      plano_id: user.plano_id || null,
+      limite_produtos: user.limite_produtos || 10
     };
 
     req.flash('success', `Bem-vindo de volta, ${user.nome}!`);
@@ -843,8 +959,8 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
       nome_loja: newUser.nome_loja,
       loja_ativa: tipo === 'vendedor',
       foto_perfil: newUser.foto_perfil,
-      plano_id: newUser.plano_id,
-      limite_produtos: newUser.limite_produtos
+      plano_id: newUser.plano_id || null,
+      limite_produtos: newUser.limite_produtos || 10
     };
 
     req.flash('success', 'Conta criada com sucesso!');
@@ -1388,7 +1504,6 @@ app.get('/vendedor', requireVendor, async (req, res) => {
         FROM solicitacoes_vip 
         WHERE vendedor_id = $1 AND status = 'pendente'
       `, [req.session.user.id]),
-      // NOVA CONSULTA: Informações de limite
       db.query(`
         SELECT 
           u.limite_produtos,
@@ -1889,58 +2004,27 @@ app.post('/vendedor/produto/:id/solicitar-vip', requireVendor, async (req, res) 
 });
 
 // ==================== CONFIGURAÇÃO ESPECIAL DE UPLOAD PARA JOGOS ====================
-// Configuração para aceitar múltiplos campos de arquivos
-const gameUpload = upload.fields([
-  { name: 'capa', maxCount: 1 },
-  { name: 'banner', maxCount: 1 },
-  { name: 'screenshots', maxCount: 4 }
-]);
-
-// ==================== ROTAS QUE FALTAVAM ====================
-
-// 1. CORREÇÃO: Rota para LISTAR jogos no Admin (Resolve o erro ao clicar em Gerir)
-app.get('/admin/jogos', requireAdmin, async (req, res) => {
-  try {
-    const jogos = await db.query('SELECT * FROM jogos ORDER BY created_at DESC');
-    res.render('admin/jogos_lista', { 
-      jogos: jogos.rows,
-      title: 'Gerenciar Jogos - Admin' 
-    });
-  } catch (error) {
-    console.error('Erro ao listar jogos:', error);
-    req.flash('error', 'Erro ao carregar lista de jogos');
-    res.redirect('/admin');
-  }
-});
-
-// 2. NOVA ROTA: Detalhes do Jogo (Página Pública estilo Steam)
-app.get('/game/:id', async (req, res) => {
-  try {
-    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1 AND ativo = true', [req.params.id]);
-    
-    if (jogo.rows.length === 0) {
-      return res.status(404).render('404', { layout: false });
+const gameUpload = multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      const uploadDir = 'public/uploads/games/';
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = path.extname(file.originalname).toLowerCase();
+      const filename = `jogo-${uniqueSuffix}${ext}`;
+      cb(null, filename);
     }
-
-    // Buscar jogos similares (mesmo gênero)
-    const similares = await db.query(
-      'SELECT * FROM jogos WHERE genero = $1 AND id != $2 AND ativo = true LIMIT 4',
-      [jogo.rows[0].genero, req.params.id]
-    );
-
-    res.render('game_detalhes', {
-      title: `${jogo.rows[0].titulo} - Kuanda Games`,
-      jogo: jogo.rows[0],
-      similares: similares.rows,
-      user: req.session.user || null
-    });
-  } catch (error) {
-    console.error('Erro ao carregar jogo:', error);
-    res.redirect('/games');
-  }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: fileFilter
 });
 
-// ==================== ROTA PÚBLICA: LOJA DE JOGOS (FRONTEND) ====================
+// ==================== ROTA PÚBLICA: LOJA DE JOGOS ====================
 app.get('/games', async (req, res) => {
   try {
     const { genero, busca, ordenar } = req.query;
@@ -1993,98 +2077,31 @@ app.get('/games', async (req, res) => {
   }
 });
 
-// ==================== ROTAS ADMIN: GERENCIAR JOGOS ====================
-
-// Form Novo Jogo
-app.get('/admin/jogos/novo', requireAdmin, (req, res) => {
-  res.render('admin/jogo_form', { jogo: null, action: '/admin/jogos' });
-});
-
-// Criar Jogo (POST)
-app.post('/admin/jogos', requireAdmin, gameUpload, async (req, res) => {
-  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
-  
+// ==================== ROTA PÚBLICA: DETALHES DO JOGO ====================
+app.get('/game/:id', async (req, res) => {
   try {
-    if (!req.files.capa) throw new Error('A capa é obrigatória');
-
-    const capa = req.files.capa[0].filename;
-    const banner = req.files.banner ? req.files.banner[0].filename : null;
-    // Processar screenshots
-    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : [];
-
-    await db.query(`
-      INSERT INTO jogos 
-      (titulo, capa, banner, screenshots, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-    `, [
-      titulo, capa, banner, screenshots, 
-      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
-      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on'
-    ]);
-
-    req.flash('success', 'Jogo publicado com sucesso!');
-    res.redirect('/admin/jogos');
-  } catch (error) {
-    console.error(error);
-    req.flash('error', 'Erro ao cadastrar jogo: ' + error.message);
-    res.redirect('/admin/jogos/novo');
-  }
-});
-
-// Form Editar Jogo
-app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
-  try {
-    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
-    if (jogo.rows.length === 0) return res.redirect('/admin/jogos');
+    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1 AND ativo = true', [req.params.id]);
     
-    res.render('admin/jogo_form', { 
-      jogo: jogo.rows[0], 
-      action: `/admin/jogos/${req.params.id}?_method=PUT` 
+    if (jogo.rows.length === 0) {
+      return res.status(404).render('404', { layout: false });
+    }
+
+    // Buscar jogos similares (mesmo gênero)
+    const similares = await db.query(
+      'SELECT * FROM jogos WHERE genero = $1 AND id != $2 AND ativo = true LIMIT 4',
+      [jogo.rows[0].genero, req.params.id]
+    );
+
+    res.render('game_detalhes', {
+      title: `${jogo.rows[0].titulo} - Kuanda Games`,
+      jogo: jogo.rows[0],
+      similares: similares.rows,
+      user: req.session.user || null
     });
-  } catch (e) { res.redirect('/admin/jogos'); }
-});
-
-// Atualizar Jogo (PUT)
-app.put('/admin/jogos/:id', requireAdmin, gameUpload, async (req, res) => {
-  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
-  
-  try {
-    const jogoAtual = await db.query('SELECT capa, banner, screenshots FROM jogos WHERE id = $1', [req.params.id]);
-    const current = jogoAtual.rows[0];
-
-    // Manter imagens antigas se não enviar novas
-    const capa = req.files.capa ? req.files.capa[0].filename : current.capa;
-    const banner = req.files.banner ? req.files.banner[0].filename : current.banner;
-    
-    // Screenshots: Se enviar novas, substitui. Se não, mantém.
-    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : current.screenshots;
-
-    await db.query(`
-      UPDATE jogos SET 
-      titulo=$1, capa=$2, banner=$3, screenshots=$4, preco=$5, plataforma=$6, genero=$7, 
-      link_download=$8, trailer_url=$9, descricao=$10, requisitos=$11, desenvolvedor=$12, classificacao=$13, ativo=$14
-      WHERE id=$15
-    `, [
-      titulo, capa, banner, screenshots, 
-      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
-      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on', 
-      req.params.id
-    ]);
-
-    req.flash('success', 'Jogo atualizado!');
-    res.redirect('/admin/jogos');
   } catch (error) {
-    console.error(error);
-    req.flash('error', 'Erro ao atualizar');
-    res.redirect('/admin/jogos');
+    console.error('Erro ao carregar jogo:', error);
+    res.redirect('/games');
   }
-});
-
-// Deletar Jogo (DELETE)
-app.delete('/admin/jogos/:id', requireAdmin, async (req, res) => {
-  await db.query('DELETE FROM jogos WHERE id = $1', [req.params.id]);
-  req.flash('success', 'Jogo removido');
-  res.redirect('/admin/jogos');
 });
 
 // ==================== PAINEL ADMINISTRATIVO ====================
@@ -2200,31 +2217,133 @@ app.get('/admin/vendedores', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/vendedor/:id/toggle-loja', requireAdmin, async (req, res) => {
+// ==================== ROTAS ADMIN: GERENCIAR JOGOS ====================
+app.get('/admin/jogos', requireAdmin, async (req, res) => {
   try {
-    const vendedor = await db.query(
-      'SELECT loja_ativa FROM usuarios WHERE id = $1 AND tipo = $2',
-      [req.params.id, 'vendedor']
-    );
-    
-    if (vendedor.rows.length === 0) {
-      req.flash('error', 'Vendedor não encontrado');
-      return res.redirect('/admin/vendedores');
-    }
-    
-    const novoStatus = !vendedor.rows[0].loja_ativa;
-
-    await db.query(
-      'UPDATE usuarios SET loja_ativa = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [novoStatus, req.params.id]
-    );
-
-    req.flash('success', `Loja ${novoStatus ? 'ativada' : 'desativada'} com sucesso!`);
-    res.redirect('/admin/vendedores');
+    const jogos = await db.query('SELECT * FROM jogos ORDER BY created_at DESC');
+    res.render('admin/jogos_lista', { 
+      jogos: jogos.rows,
+      title: 'Gerenciar Jogos - Admin' 
+    });
   } catch (error) {
-    console.error('Erro ao alterar status da loja:', error);
-    req.flash('error', 'Erro ao alterar status da loja');
-    res.redirect('/admin/vendedores');
+    console.error('Erro ao listar jogos:', error);
+    req.flash('error', 'Erro ao carregar lista de jogos');
+    res.redirect('/admin');
+  }
+});
+
+// Form Novo Jogo
+app.get('/admin/jogos/novo', requireAdmin, (req, res) => {
+  res.render('admin/jogo_form', { jogo: null, action: '/admin/jogos' });
+});
+
+// Criar Jogo (POST)
+app.post('/admin/jogos', requireAdmin, gameUpload.fields([
+  { name: 'capa', maxCount: 1 },
+  { name: 'banner', maxCount: 1 },
+  { name: 'screenshots', maxCount: 4 }
+]), async (req, res) => {
+  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
+  
+  try {
+    if (!req.files.capa) {
+      throw new Error('A capa é obrigatória');
+    }
+
+    const capa = req.files.capa[0].filename;
+    const banner = req.files.banner ? req.files.banner[0].filename : null;
+    // Processar screenshots
+    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : [];
+
+    await db.query(`
+      INSERT INTO jogos 
+      (titulo, capa, banner, screenshots, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      titulo, capa, banner, screenshots, 
+      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
+      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on'
+    ]);
+
+    req.flash('success', 'Jogo publicado com sucesso!');
+    res.redirect('/admin/jogos');
+  } catch (error) {
+    console.error(error);
+    req.flash('error', 'Erro ao cadastrar jogo: ' + error.message);
+    res.redirect('/admin/jogos/novo');
+  }
+});
+
+// Form Editar Jogo
+app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
+  try {
+    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
+    if (jogo.rows.length === 0) return res.redirect('/admin/jogos');
+    
+    res.render('admin/jogo_form', { 
+      jogo: jogo.rows[0], 
+      action: `/admin/jogos/${req.params.id}?_method=PUT` 
+    });
+  } catch (e) { 
+    res.redirect('/admin/jogos'); 
+  }
+});
+
+// Atualizar Jogo (PUT)
+app.put('/admin/jogos/:id', requireAdmin, gameUpload.fields([
+  { name: 'capa', maxCount: 1 },
+  { name: 'banner', maxCount: 1 },
+  { name: 'screenshots', maxCount: 4 }
+]), async (req, res) => {
+  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
+  
+  try {
+    const jogoAtual = await db.query('SELECT capa, banner, screenshots FROM jogos WHERE id = $1', [req.params.id]);
+    if (jogoAtual.rows.length === 0) {
+      req.flash('error', 'Jogo não encontrado');
+      return res.redirect('/admin/jogos');
+    }
+
+    const current = jogoAtual.rows[0];
+
+    // Manter imagens antigas se não enviar novas
+    const capa = req.files.capa ? req.files.capa[0].filename : current.capa;
+    const banner = req.files.banner ? req.files.banner[0].filename : current.banner;
+    
+    // Screenshots: Se enviar novas, substitui. Se não, mantém.
+    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : current.screenshots;
+
+    await db.query(`
+      UPDATE jogos SET 
+      titulo=$1, capa=$2, banner=$3, screenshots=$4, preco=$5, plataforma=$6, genero=$7, 
+      link_download=$8, trailer_url=$9, descricao=$10, requisitos=$11, desenvolvedor=$12, classificacao=$13, ativo=$14
+      WHERE id=$15
+    `, [
+      titulo, capa, banner, screenshots, 
+      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
+      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on', 
+      req.params.id
+    ]);
+
+    req.flash('success', 'Jogo atualizado!');
+    res.redirect('/admin/jogos');
+  } catch (error) {
+    console.error(error);
+    req.flash('error', 'Erro ao atualizar');
+    res.redirect('/admin/jogos');
+  }
+});
+
+// Deletar Jogo (DELETE)
+app.delete('/admin/jogos/:id', requireAdmin, async (req, res) => {
+  try {
+    await db.query('DELETE FROM jogos WHERE id = $1', [req.params.id]);
+    req.flash('success', 'Jogo removido');
+    res.redirect('/admin/jogos');
+  } catch (error) {
+    console.error('Erro ao remover jogo:', error);
+    req.flash('error', 'Erro ao remover jogo');
+    res.redirect('/admin/jogos');
   }
 });
 
@@ -2447,8 +2566,6 @@ app.delete('/admin/planos/:id', requireAdmin, async (req, res) => {
 });
 
 // ==================== ROTAS PARA ATRIBUIR/MUDAR PLANOS DE VENDEDORES ====================
-
-// Rota para atribuir plano a um vendedor específico
 app.post('/admin/vendedor/atribuir-plano', requireAdmin, async (req, res) => {
   const { vendedor_id, plano_id, limite_produtos } = req.body;
   
@@ -2500,180 +2617,59 @@ app.post('/admin/vendedor/atribuir-plano', requireAdmin, async (req, res) => {
   }
 });
 
-// Rota para mudar plano de um vendedor
-app.post('/admin/vendedor/mudar-plano', requireAdmin, async (req, res) => {
-  const { vendedor_id, novo_plano_id } = req.body;
-  
+// ==================== ROTA PARA MIGRAÇÃO DOS PLANOS ====================
+app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
   try {
-    // Validar dados
-    if (!vendedor_id || !novo_plano_id) {
-      req.flash('error', 'Vendedor e novo plano são obrigatórios');
-      return res.redirect('/admin/planos#vendedores');
+    // Verificar se já existem planos
+    const planosExistentes = await db.query('SELECT COUNT(*) as total FROM planos_vendedor');
+    
+    if (parseInt(planosExistentes.rows[0].total) === 0) {
+      // Criar planos padrão
+      await db.query(`
+        INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque) VALUES
+        ('Básico', 10, 0.00, false, false),
+        ('Pro', 50, 99.90, true, true),
+        ('Premium', 200, 299.90, true, true),
+        ('Enterprise', 1000, 999.90, true, true)
+      `);
+      
+      req.flash('success', 'Planos padrão criados com sucesso!');
+    } else {
+      req.flash('info', 'Planos já existem no sistema.');
     }
 
-    // Verificar se vendedor existe
-    const vendedor = await db.query(
-      'SELECT * FROM usuarios WHERE id = $1 AND tipo = $2',
-      [vendedor_id, 'vendedor']
-    );
-    
-    if (vendedor.rows.length === 0) {
-      req.flash('error', 'Vendedor não encontrado');
-      return res.redirect('/admin/planos#vendedores');
-    }
-
-    // Verificar se novo plano existe
-    const novoPlano = await db.query(
-      'SELECT * FROM planos_vendedor WHERE id = $1',
-      [novo_plano_id]
-    );
-    
-    if (novoPlano.rows.length === 0) {
-      req.flash('error', 'Novo plano não encontrado');
-      return res.redirect('/admin/planos#vendedores');
-    }
-
-    // Verificar se vendedor já está no limite
-    const produtosVendedor = await db.query(
-      'SELECT COUNT(*) as total FROM produtos WHERE vendedor_id = $1',
-      [vendedor_id]
-    );
-    
-    const totalProdutos = parseInt(produtosVendedor.rows[0].total);
-    const limiteNovo = novoPlano.rows[0].limite_produtos;
-    
-    if (totalProdutos > limiteNovo) {
-      req.flash('warning', `Atenção: Vendedor tem ${totalProdutos} produtos, mas novo plano permite apenas ${limiteNovo}. Produtos acima do limite ficarão ocultos.`);
-    }
-
-    // Atualizar plano do vendedor
-    await db.query(`
-      UPDATE usuarios 
-      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
-    `, [parseInt(novo_plano_id), limiteNovo, vendedor_id]);
-
-    req.flash('success', 'Plano alterado com sucesso!');
-    res.redirect('/admin/planos#vendedores');
-  } catch (error) {
-    console.error('Erro ao mudar plano:', error);
-    req.flash('error', 'Erro ao mudar plano: ' + error.message);
-    res.redirect('/admin/planos#vendedores');
-  }
-});
-
-// Rota para atribuir plano massivo a todos vendedores sem plano
-app.post('/admin/vendedor/atribuir-plano-massivo', requireAdmin, async (req, res) => {
-  const { plano_id } = req.body;
-  
-  try {
-    if (!plano_id) {
-      req.flash('error', 'Plano é obrigatório');
-      return res.redirect('/admin/planos#sem-plano');
-    }
-
-    // Verificar se plano existe
-    const plano = await db.query(
-      'SELECT * FROM planos_vendedor WHERE id = $1',
-      [plano_id]
-    );
-    
-    if (plano.rows.length === 0) {
-      req.flash('error', 'Plano não encontrado');
-      return res.redirect('/admin/planos#sem-plano');
-    }
-
-    const limite = plano.rows[0].limite_produtos;
-    
-    // Atribuir plano a todos vendedores sem plano
-    const result = await db.query(`
-      UPDATE usuarios 
-      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
+    // Atualizar vendedores existentes
+    const vendedoresSemPlano = await db.query(`
+      SELECT COUNT(*) as total 
+      FROM usuarios 
       WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)
-      RETURNING id
-    `, [parseInt(plano_id), limite]);
-    
-    const qtdAtualizados = result.rowCount || 0;
+    `);
 
-    req.flash('success', `Plano atribuído a ${qtdAtualizados} vendedores sem plano!`);
-    res.redirect('/admin/planos#sem-plano');
-  } catch (error) {
-    console.error('Erro ao atribuir plano massivo:', error);
-    req.flash('error', 'Erro ao atribuir plano massivo: ' + error.message);
-    res.redirect('/admin/planos#sem-plano');
-  }
-});
-
-// Rota para atualizar plano específico de um vendedor
-app.post('/admin/vendedor/:id/atualizar-plano', requireAdmin, async (req, res) => {
-  const { plano_id, limite_produtos } = req.body;
-  
-  try {
-    // Buscar informações do plano selecionado
-    let novoLimite = parseInt(limite_produtos) || 10;
-    
-    if (plano_id) {
-      const plano = await db.query(
-        'SELECT limite_produtos FROM planos_vendedor WHERE id = $1',
-        [plano_id]
+    if (parseInt(vendedoresSemPlano.rows[0].total) > 0) {
+      const planoBasico = await db.query(
+        "SELECT id FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
       );
       
-      if (plano.rows.length > 0) {
-        novoLimite = plano.rows[0].limite_produtos;
+      if (planoBasico.rows.length > 0) {
+        await db.query(`
+          UPDATE usuarios 
+          SET plano_id = $1, limite_produtos = 10
+          WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)
+        `, [planoBasico.rows[0].id]);
+        
+        req.flash('success', `${vendedoresSemPlano.rows[0].total} vendedores atualizados para o plano Básico.`);
       }
     }
-    
-    await db.query(`
-      UPDATE usuarios 
-      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3 AND tipo = 'vendedor'
-    `, [
-      plano_id ? parseInt(plano_id) : null,
-      novoLimite,
-      req.params.id
-    ]);
-    
-    req.flash('success', 'Plano e limite atualizados com sucesso!');
-    res.redirect('/admin/vendedores');
+
+    res.redirect('/admin/planos');
   } catch (error) {
-    console.error('Erro ao atualizar plano:', error);
-    req.flash('error', 'Erro ao atualizar plano');
-    res.redirect('/admin/vendedores');
+    console.error('Erro na migração de planos:', error);
+    req.flash('error', 'Erro na migração de planos: ' + error.message);
+    res.redirect('/admin');
   }
 });
 
-// Rota auxiliar para AJAX - obter informações do plano
-app.get('/admin/plano-info/:id', requireAdmin, async (req, res) => {
-  try {
-    const plano = await db.query(
-      'SELECT id, nome, limite_produtos FROM planos_vendedor WHERE id = $1',
-      [req.params.id]
-    );
-    
-    if (plano.rows.length > 0) {
-      res.json({ 
-        success: true, 
-        nome: plano.rows[0].nome,
-        limite: plano.rows[0].limite_produtos 
-      });
-    } else {
-      res.json({ 
-        success: false, 
-        nome: 'Sem plano',
-        limite: 10 
-      });
-    }
-  } catch (error) {
-    console.error('Erro ao buscar plano:', error);
-    res.json({ 
-      success: false, 
-      nome: 'Erro', 
-      limite: 10 
-    });
-  }
-});
-
-// ==================== ROTA DE CATEGORIAS (ADICIONAR AO SERVER.JS) ====================
+// ==================== ROTA DE CATEGORIAS ====================
 app.get('/categorias', async (req, res) => {
   try {
     // Buscar tudo em paralelo para ser rápido
@@ -2737,16 +2733,15 @@ app.get('/categorias', async (req, res) => {
   }
 });
 
-// ==================== ROTA DE OFERTAS (CORRIGIDA E ROBUSTA) ====================
+// ==================== ROTA DE OFERTAS ====================
 app.get('/ofertas', async (req, res) => {
-  console.log('🔄 Iniciando rota /ofertas...'); // Log para confirmar que a rota foi chamada
+  console.log('🔄 Iniciando rota /ofertas...');
 
   try {
     // 1. Verificar conexão com banco
     if (!db) throw new Error('Conexão com banco de dados não estabelecida.');
 
     // 2. Query de Produtos em Oferta
-    // Simplifiquei o GROUP BY para evitar erros estritos do PostgreSQL
     const queryOfertas = `
       SELECT p.id, p.nome, p.preco, p.preco_promocional, p.imagem1, p.estoque, p.vip,
              u.nome_loja, u.foto_perfil as loja_foto,
@@ -2786,804 +2781,37 @@ app.get('/ofertas', async (req, res) => {
     console.log(`✅ Sucesso! ${ofertasResult.rows.length} ofertas encontradas.`);
 
     // 4. Renderização Segura
-    // Passamos explicitamente user, carrinho e messages para evitar erros no layout
     res.render('ofertas', {
       title: 'Ofertas Relâmpago | KuandaShop',
       produtos: ofertasResult.rows,
       categorias: categoriasResult.rows,
       user: req.session.user || null,
       carrinho: req.session.carrinho || [],
-      messages: req.flash() // Garante que o toast não quebre
+      messages: req.flash()
     });
 
   } catch (error) {
     console.error('❌ ERRO CRÍTICO NA ROTA /OFERTAS:', error);
-    console.error(error.stack); // Mostra a linha exata do erro
+    console.error(error.stack);
 
-    // Em vez de tela branca, renderiza a página de erro 500 bonita
     res.status(500).render('500', {
-      layout: false, // Não usa o layout padrão para evitar loops de erro
+      layout: false,
       error: error,
       title: 'Erro ao carregar ofertas'
     });
   }
 });
 
-// ==================== GERENCIAMENTO DE SOLICITAÇÕES VIP ====================
-app.get('/admin/solicitacoes-vip', requireAdmin, async (req, res) => {
-  try {
-    const solicitacoes = await db.query(`
-      SELECT sv.*, p.nome as produto_nome, p.imagem1, u.nome as vendedor_nome, u.telefone, u.email, u.nome_loja
-      FROM solicitacoes_vip sv
-      JOIN produtos p ON sv.produto_id = p.id
-      JOIN usuarios u ON sv.vendedor_id = u.id
-      WHERE sv.status = 'pendente'
-      ORDER BY sv.created_at DESC
-    `);
-
-    res.render('admin/solicitacoes-vip', {
-      solicitacoes: solicitacoes.rows,
-      title: 'Solicitações VIP - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar solicitações VIP:', error);
-    res.render('admin/solicitacoes-vip', { 
-      solicitacoes: [],
-      title: 'Solicitações VIP'
-    });
-  }
-});
-
-app.post('/admin/solicitacao-vip/:id/aprovar', requireAdmin, async (req, res) => {
-  try {
-    const solicitacao = await db.query(`
-      SELECT sv.*, p.nome as produto_nome, u.nome as vendedor_nome
-      FROM solicitacoes_vip sv
-      JOIN produtos p ON sv.produto_id = p.id
-      JOIN usuarios u ON sv.vendedor_id = u.id
-      WHERE sv.id = $1
-    `, [req.params.id]);
-    
-    if (solicitacao.rows.length === 0) {
-      req.flash('error', 'Solicitação não encontrada');
-      return res.redirect('/admin/solicitacoes-vip');
-    }
-
-    const sol = solicitacao.rows[0];
-
-    // Atualizar produto para VIP
-    await db.query(
-      'UPDATE produtos SET vip = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
-      [sol.produto_id]
-    );
-    
-    // Atualizar status da solicitação
-    await db.query(
-      'UPDATE solicitacoes_vip SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      ['aprovada', req.params.id]
-    );
-
-    req.flash('success', `Solicitação aprovada! Produto "${sol.produto_nome}" agora é VIP.`);
-    res.redirect('/admin/solicitacoes-vip');
-  } catch (error) {
-    console.error('Erro ao aprovar solicitação:', error);
-    req.flash('error', 'Erro ao aprovar solicitação');
-    res.redirect('/admin/solicitacoes-vip');
-  }
-});
-
-app.post('/admin/solicitacao-vip/:id/rejeitar', requireAdmin, async (req, res) => {
-  try {
-    const { motivo } = req.body;
-    
-    if (!motivo || motivo.trim().length < 5) {
-      req.flash('error', 'É necessário fornecer um motivo para rejeição (mínimo 5 caracteres)');
-      return res.redirect('/admin/solicitacoes-vip');
-    }
-    
-    await db.query(`
-      UPDATE solicitacoes_vip 
-      SET status = $1, motivo_rejeicao = $2, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $3
-    `, ['rejeitada', motivo.trim(), req.params.id]);
-
-    req.flash('success', 'Solicitação rejeitada.');
-    res.redirect('/admin/solicitacoes-vip');
-  } catch (error) {
-    console.error('Erro ao rejeitar solicitação:', error);
-    req.flash('error', 'Erro ao rejeitar solicitação');
-    res.redirect('/admin/solicitacoes-vip');
-  }
-});
-
-// ==================== GERENCIAMENTO DE BANNERS ====================
-app.get('/admin/banners', requireAdmin, async (req, res) => {
-  try {
-    const banners = await db.query(`
-      SELECT * FROM banners 
-      ORDER BY ordem, created_at DESC
-    `);
-    
-    res.render('admin/banners', {
-      banners: banners.rows,
-      title: 'Gerenciar Banners - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar banners:', error);
-    req.flash('error', 'Erro ao carregar banners');
-    res.render('admin/banners', {
-      banners: [],
-      title: 'Gerenciar Banners'
-    });
-  }
-});
-
-app.get('/admin/banners/novo', requireAdmin, (req, res) => {
-  res.render('admin/banner-form', {
-    banner: null,
-    action: '/admin/banners',
-    title: 'Novo Banner - KuandaShop'
-  });
-});
-
-app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, res) => {
-  const { titulo, link, ordem, ativo } = req.body;
-  
-  try {
-    if (!req.file) {
-      req.flash('error', 'É necessário enviar uma imagem para o banner');
-      return res.redirect('/admin/banners/novo');
-    }
-
-    await db.query(`
-      INSERT INTO banners (titulo, imagem, link, ordem, ativo)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [
-      titulo ? titulo.trim() : null,
-      req.file.filename,
-      link ? link.trim() : null,
-      ordem ? parseInt(ordem) : 0,
-      ativo === 'on'
-    ]);
-    
-    req.flash('success', 'Banner criado com sucesso!');
-    res.redirect('/admin/banners');
-  } catch (error) {
-    console.error('Erro ao criar banner:', error);
-    
-    if (req.file) {
-      const filePath = path.join('public/uploads/banners/', req.file.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    req.flash('error', 'Erro ao criar banner');
-    res.redirect('/admin/banners/novo');
-  }
-});
-
-app.get('/admin/banners/:id/editar', requireAdmin, async (req, res) => {
-  try {
-    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
-    
-    if (banner.rows.length === 0) {
-      req.flash('error', 'Banner não encontrado');
-      return res.redirect('/admin/banners');
-    }
-    
-    res.render('admin/banner-form', {
-      banner: banner.rows[0],
-      action: `/admin/banners/${req.params.id}?_method=PUT`,
-      title: 'Editar Banner - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar banner:', error);
-    req.flash('error', 'Erro ao carregar banner');
-    res.redirect('/admin/banners');
-  }
-});
-
-app.put('/admin/banners/:id', requireAdmin, upload.single('imagem'), async (req, res) => {
-  const { titulo, link, ordem, ativo } = req.body;
-  
-  try {
-    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
-    
-    if (banner.rows.length === 0) {
-      req.flash('error', 'Banner não encontrado');
-      return res.redirect('/admin/banners');
-    }
-    
-    let imagem = banner.rows[0].imagem;
-    
-    if (req.file) {
-      // Remover arquivo antigo se existir
-      const oldPath = path.join('public/uploads/banners/', banner.rows[0].imagem);
-      if (fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
-      }
-      imagem = req.file.filename;
-    }
-    
-    await db.query(`
-      UPDATE banners 
-      SET titulo = $1, imagem = $2, link = $3, ordem = $4, ativo = $5, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $6
-    `, [
-      titulo ? titulo.trim() : null,
-      imagem,
-      link ? link.trim() : null,
-      ordem ? parseInt(ordem) : 0,
-      ativo === 'on',
-      req.params.id
-    ]);
-    
-    req.flash('success', 'Banner atualizado com sucesso!');
-    res.redirect('/admin/banners');
-  } catch (error) {
-    console.error('Erro ao atualizar banner:', error);
-    req.flash('error', 'Erro ao atualizar banner');
-    res.redirect(`/admin/banners/${req.params.id}/editar`);
-  }
-});
-
-app.delete('/admin/banners/:id', requireAdmin, async (req, res) => {
-  try {
-    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
-    
-    if (banner.rows.length === 0) {
-      req.flash('error', 'Banner não encontrado');
-      return res.redirect('/admin/banners');
-    }
-    
-    const filePath = path.join('public/uploads/banners/', banner.rows[0].imagem);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-    
-    await db.query('DELETE FROM banners WHERE id = $1', [req.params.id]);
-    
-    req.flash('success', 'Banner excluído com sucesso!');
-    res.redirect('/admin/banners');
-  } catch (error) {
-    console.error('Erro ao excluir banner:', error);
-    req.flash('error', 'Erro ao excluir banner');
-    res.redirect('/admin/banners');
-  }
-});
-
-app.post('/admin/banners/:id/toggle-status', requireAdmin, async (req, res) => {
-  try {
-    const banner = await db.query('SELECT ativo FROM banners WHERE id = $1', [req.params.id]);
-    
-    if (banner.rows.length === 0) {
-      return res.json({ success: false, message: 'Banner não encontrado' });
-    }
-    
-    const novoStatus = !banner.rows[0].ativo;
-    
-    await db.query(
-      'UPDATE banners SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [novoStatus, req.params.id]
-    );
-    
-    res.json({ 
-      success: true, 
-      message: `Banner ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
-      novoStatus 
-    });
-  } catch (error) {
-    console.error('Erro ao alterar status:', error);
-    res.json({ success: false, message: 'Erro ao alterar status' });
-  }
-});
-
-// ==================== GERENCIAMENTO DE FILMES ====================
-app.get('/admin/filmes', requireAdmin, async (req, res) => {
-  try {
-    const filmes = await db.query(`
-      SELECT * FROM filmes 
-      ORDER BY data_lancamento DESC, created_at DESC
-    `);
-    
-    res.render('admin/filmes', {
-      filmes: filmes.rows,
-      title: 'Gerenciar Filmes - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar filmes:', error);
-    req.flash('error', 'Erro ao carregar filmes');
-    res.render('admin/filmes', {
-      filmes: [],
-      title: 'Gerenciar Filmes'
-    });
-  }
-});
-
-app.get('/admin/filmes/novo', requireAdmin, (req, res) => {
-  res.render('admin/filme-form', {
-    filme: null,
-    action: '/admin/filmes',
-    title: 'Novo Filme - KuandaShop'
-  });
-});
-
-app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res) => {
-  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
-  
-  try {
-    if (!req.file) {
-      req.flash('error', 'É necessário enviar um poster para o filme');
-      return res.redirect('/admin/filmes/novo');
-    }
-
-    await db.query(`
-      INSERT INTO filmes (titulo, poster, trailer_url, sinopse, data_lancamento, classificacao, ativo)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, [
-      titulo.trim(),
-      req.file.filename,
-      trailer_url ? trailer_url.trim() : null,
-      sinopse ? sinopse.trim() : null,
-      data_lancamento,
-      classificacao ? classificacao.trim() : null,
-      ativo === 'on'
-    ]);
-    
-    req.flash('success', 'Filme adicionado com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao criar filme:', error);
-    
-    if (req.file) {
-      const filePath = path.join('public/uploads/filmes/', req.file.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    req.flash('error', 'Erro ao criar filme');
-    res.redirect('/admin/filmes/novo');
-  }
-});
-
-app.get('/admin/filmes/:id/editar', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
-    }
-    
-    res.render('admin/filme-form', {
-      filme: filme.rows[0],
-      action: `/admin/filmes/${req.params.id}?_method=PUT`,
-      title: 'Editar Filme - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar filme:', error);
-    req.flash('error', 'Erro ao carregar filme');
-    res.redirect('/admin/filmes');
-  }
-});
-
-app.put('/admin/filmes/:id', requireAdmin, upload.single('poster'), async (req, res) => {
-  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
-  
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
-    }
-    
-    let poster = filme.rows[0].poster;
-    
-    if (req.file) {
-      if (filme.rows[0].poster) {
-        const oldPath = path.join('public/uploads/filmes/', filme.rows[0].poster);
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-        }
-      }
-      poster = req.file.filename;
-    }
-    
-    await db.query(`
-      UPDATE filmes 
-      SET titulo = $1, poster = $2, trailer_url = $3, sinopse = $4, 
-          data_lancamento = $5, classificacao = $6, ativo = $7, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $8
-    `, [
-      titulo.trim(),
-      poster,
-      trailer_url ? trailer_url.trim() : null,
-      sinopse ? sinopse.trim() : null,
-      data_lancamento,
-      classificacao ? classificacao.trim() : null,
-      ativo === 'on',
-      req.params.id
-    ]);
-    
-    req.flash('success', 'Filme atualizado com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao atualizar filme:', error);
-    req.flash('error', 'Erro ao atualizar filme');
-    res.redirect(`/admin/filmes/${req.params.id}/editar`);
-  }
-});
-
-app.delete('/admin/filmes/:id', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
-    }
-    
-    if (filme.rows[0].poster) {
-      const filePath = path.join('public/uploads/filmes/', filme.rows[0].poster);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    await db.query('DELETE FROM filmes WHERE id = $1', [req.params.id]);
-    
-    req.flash('success', 'Filme excluído com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao excluir filme:', error);
-    req.flash('error', 'Erro ao excluir filme');
-    res.redirect('/admin/filmes');
-  }
-});
-
-app.post('/admin/filmes/:id/toggle-status', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT ativo FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      return res.json({ success: false, message: 'Filme não encontrado' });
-    }
-    
-    const novoStatus = !filme.rows[0].ativo;
-    
-    await db.query(
-      'UPDATE filmes SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [novoStatus, req.params.id]
-    );
-    
-    res.json({ 
-      success: true, 
-      message: `Filme ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
-      novoStatus 
-    });
-  } catch (error) {
-    console.error('Erro ao alterar status:', error);
-    res.json({ success: false, message: 'Erro ao alterar status' });
-  }
-});
-
-// ==================== CONFIGURAÇÕES DO SITE ====================
-app.get('/admin/configuracoes', requireAdmin, async (req, res) => {
-  try {
-    const configuracoes = await db.query('SELECT * FROM configuracoes LIMIT 1');
-    
-    res.render('admin/configuracoes', {
-      config: configuracoes.rows[0] || {},
-      title: 'Configurações do Site - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar configurações:', error);
-    res.render('admin/configuracoes', {
-      config: {},
-      title: 'Configurações do Site'
-    });
-  }
-});
-
-app.post('/admin/configuracoes', requireAdmin, async (req, res) => {
-  const { nome_site, email_contato, telefone_contato, endereco, sobre_nos } = req.body;
-  
-  try {
-    const configExistente = await db.query('SELECT id FROM configuracoes LIMIT 1');
-    
-    if (configExistente.rows.length > 0) {
-      await db.query(`
-        UPDATE configuracoes 
-        SET nome_site = $1, email_contato = $2, telefone_contato = $3, 
-            endereco = $4, sobre_nos = $5, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $6
-      `, [
-        nome_site ? nome_site.trim() : 'KuandaShop',
-        email_contato ? email_contato.trim() : null,
-        telefone_contato ? telefone_contato.trim() : null,
-        endereco ? endereco.trim() : null,
-        sobre_nos ? sobre_nos.trim() : null,
-        configExistente.rows[0].id
-      ]);
-    } else {
-      await db.query(`
-        INSERT INTO configuracoes (nome_site, email_contato, telefone_contato, endereco, sobre_nos)
-        VALUES ($1, $2, $3, $4, $5)
-      `, [
-        nome_site ? nome_site.trim() : 'KuandaShop',
-        email_contato ? email_contato.trim() : null,
-        telefone_contato ? telefone_contato.trim() : null,
-        endereco ? endereco.trim() : null,
-        sobre_nos ? sobre_nos.trim() : null
-      ]);
-    }
-    
-    req.flash('success', 'Configurações atualizadas com sucesso!');
-    res.redirect('/admin/configuracoes');
-  } catch (error) {
-    console.error('Erro ao salvar configurações:', error);
-    req.flash('error', 'Erro ao salvar configurações');
-    res.redirect('/admin/configuracoes');
-  }
-});
-
-// ==================== GERENCIAMENTO DE CATEGORIAS ====================
-app.get('/admin/categorias', requireAdmin, async (req, res) => {
-  try {
-    const categorias = await db.query('SELECT * FROM categorias ORDER BY nome');
-    
-    res.render('admin/categorias', {
-      categorias: categorias.rows,
-      title: 'Gerenciar Categorias - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar categorias:', error);
-    res.render('admin/categorias', {
-      categorias: [],
-      title: 'Gerenciar Categorias'
-    });
-  }
-});
-
-app.post('/admin/categorias', requireAdmin, async (req, res) => {
-  const { nome, descricao } = req.body;
-  
-  try {
-    if (!nome || nome.trim().length < 2) {
-      req.flash('error', 'Nome da categoria deve ter pelo menos 2 caracteres');
-      return res.redirect('/admin/categorias');
-    }
-
-    await db.query(`
-      INSERT INTO categorias (nome, descricao)
-      VALUES ($1, $2)
-    `, [nome.trim(), descricao ? descricao.trim() : null]);
-    
-    req.flash('success', 'Categoria criada com sucesso!');
-    res.redirect('/admin/categorias');
-  } catch (error) {
-    console.error('Erro ao criar categoria:', error);
-    req.flash('error', 'Erro ao criar categoria');
-    res.redirect('/admin/categorias');
-  }
-});
-
-app.put('/admin/categorias/:id', requireAdmin, async (req, res) => {
-  const { nome, descricao } = req.body;
-  
-  try {
-    if (!nome || nome.trim().length < 2) {
-      req.flash('error', 'Nome da categoria deve ter pelo menos 2 caracteres');
-      return res.redirect('/admin/categorias');
-    }
-
-    await db.query(`
-      UPDATE categorias 
-      SET nome = $1, descricao = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
-    `, [nome.trim(), descricao ? descricao.trim() : null, req.params.id]);
-    
-    req.flash('success', 'Categoria atualizada com sucesso!');
-    res.redirect('/admin/categorias');
-  } catch (error) {
-    console.error('Erro ao atualizar categoria:', error);
-    req.flash('error', 'Erro ao atualizar categoria');
-    res.redirect('/admin/categorias');
-  }
-});
-
-app.delete('/admin/categorias/:id', requireAdmin, async (req, res) => {
-  try {
-    const produtos = await db.query(
-      'SELECT COUNT(*) as total FROM produtos WHERE categoria_id = $1',
-      [req.params.id]
-    );
-    
-    if (parseInt(produtos.rows[0].total) > 0) {
-      req.flash('error', 'Esta categoria está sendo usada por produtos e não pode ser removida');
-      return res.redirect('/admin/categorias');
-    }
-    
-    await db.query('DELETE FROM categorias WHERE id = $1', [req.params.id]);
-    
-    req.flash('success', 'Categoria removida com sucesso!');
-    res.redirect('/admin/categorias');
-  } catch (error) {
-    console.error('Erro ao remover categoria:', error);
-    req.flash('error', 'Erro ao remover categoria');
-    res.redirect('/admin/categorias');
-  }
-});
-
-// ==================== GERENCIAMENTO DE PLANOS ====================
-app.get('/admin/planos', requireAdmin, async (req, res) => {
-  try {
-    const [planos, vendedoresPorPlano, vendedoresSemPlano, statsResult] = await Promise.all([
-      db.query(`
-        SELECT pv.*, COUNT(u.id) as total_vendedores
-        FROM planos_vendedor pv
-        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
-        GROUP BY pv.id
-        ORDER BY pv.limite_produtos
-      `),
-      // Vendedores agrupados por plano
-      db.query(`
-        SELECT 
-          pv.nome as plano_nome,
-          pv.id as plano_id,
-          json_agg(
-            json_build_object(
-              'id', u.id,
-              'nome', u.nome,
-              'nome_loja', u.nome_loja,
-              'email', u.email,
-              'telefone', u.telefone,
-              'foto_perfil', u.foto_perfil,
-              'loja_ativa', u.loja_ativa,
-              'created_at', u.created_at,
-              'plano_id', u.plano_id,
-              'limite_produtos', u.limite_produtos,
-              'total_produtos', (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id)
-            )
-          ) as vendedores
-        FROM planos_vendedor pv
-        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
-        WHERE u.id IS NOT NULL
-        GROUP BY pv.id, pv.nome
-        ORDER BY pv.limite_produtos
-      `),
-      // Vendedores sem plano
-      db.query(`
-        SELECT 
-          u.*,
-          (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id) as total_produtos
-        FROM usuarios u
-        WHERE u.tipo = 'vendedor' 
-          AND (u.plano_id IS NULL OR u.plano_id = 0)
-        ORDER BY u.created_at DESC
-      `),
-      // Estatísticas
-      db.query(`
-        SELECT 
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND loja_ativa = true) as vendedores_ativos,
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND plano_id IS NOT NULL) as vendedores_com_plano,
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)) as vendedores_sem_plano,
-          (SELECT COUNT(*) FROM planos_vendedor) as total_planos
-      `)
-    ]);
-
-    // Corrigir a estrutura dos dados
-    const stats = statsResult.rows[0] || {
-      vendedores_ativos: 0,
-      vendedores_com_plano: 0,
-      vendedores_sem_plano: 0,
-      total_planos: 0
-    };
-
-    res.render('admin/planos', {
-      planos: planos.rows,
-      vendedoresPorPlano: vendedoresPorPlano.rows,
-      vendedoresSemPlano: vendedoresSemPlano.rows,
-      stats: stats, // Nome correto da variável
-      title: 'Gerenciar Planos - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar planos:', error);
-    res.render('admin/planos', { 
-      planos: [],
-      vendedoresPorPlano: [],
-      vendedoresSemPlano: [],
-      stats: {
-        vendedores_ativos: 0,
-        vendedores_com_plano: 0,
-        vendedores_sem_plano: 0,
-        total_planos: 0
-      },
-      title: 'Gerenciar Planos de Vendedores'
-    });
-  }
-});
-
-// ==================== ROTA PARA MIGRAÇÃO DOS PLANOS ====================
-app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
-  try {
-    // Verificar se a tabela planos_vendedor existe
-    const tableExists = await db.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'planos_vendedor'
-      )
-    `);
-
-    if (!tableExists.rows[0].exists) {
-      req.flash('error', 'Tabela de planos não existe. Execute o script SQL primeiro.');
-      return res.redirect('/admin');
-    }
-
-    // Verificar se já existem planos
-    const planosExistentes = await db.query('SELECT COUNT(*) as total FROM planos_vendedor');
-    
-    if (parseInt(planosExistentes.rows[0].total) === 0) {
-      // Criar planos padrão
-      await db.query(`
-        INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque) VALUES
-        ('Básico', 10, 0.00, false, false),
-        ('Pro', 50, 99.90, true, true),
-        ('Premium', 200, 299.90, true, true),
-        ('Enterprise', 1000, 999.90, true, true)
-      `);
-      
-      req.flash('success', 'Planos padrão criados com sucesso!');
-    } else {
-      req.flash('info', 'Planos já existem no sistema.');
-    }
-
-    // Atualizar vendedores existentes
-    const vendedoresSemPlano = await db.query(`
-      SELECT COUNT(*) as total 
-      FROM usuarios 
-      WHERE tipo = 'vendedor' AND plano_id IS NULL
-    `);
-
-    if (parseInt(vendedoresSemPlano.rows[0].total) > 0) {
-      const planoBasico = await db.query(
-        "SELECT id FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
-      );
-      
-      if (planoBasico.rows.length > 0) {
-        await db.query(`
-          UPDATE usuarios 
-          SET plano_id = $1, limite_produtos = 10
-          WHERE tipo = 'vendedor' AND plano_id IS NULL
-        `, [planoBasico.rows[0].id]);
-        
-        req.flash('success', `${vendedoresSemPlano.rows[0].total} vendedores atualizados para o plano Básico.`);
-      }
-    }
-
-    res.redirect('/admin/planos');
-  } catch (error) {
-    console.error('Erro na migração de planos:', error);
-    req.flash('error', 'Erro na migração de planos: ' + error.message);
-    res.redirect('/admin');
-  }
-});
-
-// ==================== TRATAMENTO DE ERROS (BLINDADO) ====================
+// ==================== TRATAMENTO DE ERROS ====================
 
 // 1. Erro 404 - Página não encontrada
 app.use((req, res) => {
-  // Acesso seguro ao usuário (previne erro se o banco cair)
   const safeUser = (req.session && req.session.user) ? req.session.user : null;
 
   res.status(404).render('404', {
     layout: false,
     title: '404 - Página não encontrada',
-    user: safeUser, // Passa como 'user' ou 'currentUser' dependendo da sua view
+    user: safeUser,
     currentUser: safeUser
   });
 });
@@ -3591,7 +2819,6 @@ app.use((req, res) => {
 // 2. Erros do Multer (Upload)
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    // Só tenta usar flash se a sessão estiver ativa
     if (req.session && typeof req.flash === 'function') {
       if (err.code === 'LIMIT_FILE_SIZE') {
         req.flash('error', 'Arquivo muito grande. Tamanho máximo: 5MB');
@@ -3600,27 +2827,21 @@ app.use((err, req, res, next) => {
       }
       return res.redirect('back');
     }
-    // Se a sessão caiu, passa para o erro 500 tratar
     return next(err);
   }
   
-  // Se não for erro do Multer, passa para o próximo
   next(err);
 });
 
-// 3. Erro 500 - Erro Interno (Onde ocorria a falha crítica)
+// 3. Erro 500 - Erro Interno
 app.use((err, req, res, next) => {
   console.error('❌ ERRO CRÍTICO NO SERVIDOR:', err);
   
-  // Se a resposta já foi enviada, não faz nada
   if (res.headersSent) {
     return next(err);
   }
 
-  // Tenta limpar a sessão APENAS se ela existir
-  // Isso corrige o erro: "Cannot read properties of undefined (reading 'destroy')"
   if (req.session && typeof req.session.destroy === 'function') {
-    // Se for erro de sessão/banco ou flash, tenta destruir a sessão corrompida
     if (err.code === '08P01' || err.code === 'ECONNREFUSED' || (err.message && err.message.includes('flash'))) {
       req.session.destroy((destroyErr) => {
         if (destroyErr) console.error('Erro secundário ao destruir sessão:', destroyErr);
@@ -3628,13 +2849,11 @@ app.use((err, req, res, next) => {
     }
   }
 
-  // Define um usuário nulo para a view não quebrar
   const safeUser = (req.session && req.session.user) ? req.session.user : null;
 
   res.status(500).render('500', {
     layout: false,
     title: '500 - Erro interno do servidor',
-    // Mostra o erro detalhado apenas em desenvolvimento
     error: process.env.NODE_ENV === 'development' ? err : { message: 'Ocorreu um erro inesperado. Tente novamente.' },
     user: safeUser,
     currentUser: safeUser
@@ -3655,8 +2874,8 @@ const server = app.listen(PORT, () => {
   ✅ Sistema de planos implementado
   
   📍 Porta: ${PORT}
-  🌐 Ambiente: ${process.env.NODE_ENV || 'development'}
-  🔗 URL: http://localhost:${PORT}
+  🌐 Ambiente: ${process.env.NODE_ENV || 'production'}
+  🔗 URL: https://kuanda.onrender.com
   
   👤 Credenciais Admin:
     Email: admin@kuandashop.ao
@@ -3674,8 +2893,9 @@ const server = app.listen(PORT, () => {
     • Sistema de VIP/destaque
     • Seguidores de lojas
     • Sistema de planos com limites
+    • Loja de jogos completa
   
-  💡 Dica: Acesse /admin/migrar-planos para configurar planos
+  💡 Sistema pronto para produção!
   
   ====================================================
   `);
