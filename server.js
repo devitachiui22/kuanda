@@ -2005,9 +2005,8 @@ const gameUpload = upload.fields([
   { name: 'screenshots', maxCount: 4 }
 ]);
 
-// ==================== ROTAS QUE FALTAVAM ====================
-
-app.get('/admin/jogos_lista', requireAdmin, async (req, res) => {
+// ROTA CORRIGIDA (Mude de 'jogos_lista' para 'jogos')
+app.get('/admin/jogos', requireAdmin, async (req, res) => {
   try {
     const { rows: jogos } = await db.query(`
       SELECT *
@@ -2015,9 +2014,10 @@ app.get('/admin/jogos_lista', requireAdmin, async (req, res) => {
       ORDER BY created_at DESC
     `);
 
+    // Renderiza o arquivo que está em views/admin/jogos.ejs
     res.render('admin/jogos', {
       title: 'Gerir Jogos',
-      jogos
+      jogos: jogos
     });
 
   } catch (error) {
