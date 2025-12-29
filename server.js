@@ -21,7 +21,8 @@ const uploadDirs = [
   'public/uploads/banners',
   'public/uploads/filmes',
   'public/uploads/produtos',
-  'public/uploads/perfil'
+  'public/uploads/perfil',
+  'public/uploads/games'
 ];
 
 uploadDirs.forEach(dir => {
@@ -31,7 +32,7 @@ uploadDirs.forEach(dir => {
   }
 });
 
-// ==================== CONFIGURAÇÃO DO MULTER ====================
+// ==================== CONFIGURAÇÃO DO MULTER (ARQUIVOS + BYTEA) ====================
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     let uploadPath = 'public/uploads/';
@@ -102,6 +103,68 @@ const uploadPerfil = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: fileFilter
 });
+
+// ==================== CONFIGURAÇÃO BYTEA PARA IMAGENS PERSISTENTES ====================
+
+// Função para salvar também como bytea no banco de dados
+const salvarImagemBytea = async (filePath, tabela, campoId, idRegistro, campoImagem = 'imagem') => {
+  try {
+    if (!fs.existsSync(filePath)) {
+      console.error(`Arquivo não encontrado: ${filePath}`);
+      return false;
+    }
+    
+    const imagemBuffer = fs.readFileSync(filePath);
+    const bytea = imagemBuffer.toString('binary');
+    
+    await db.query(
+      `UPDATE ${tabela} SET ${campoImagem}_bytea = $1 WHERE ${campoId} = $2`,
+      [bytea, idRegistro]
+    );
+    
+    console.log(`✅ Imagem salva como bytea para ${tabela}.${campoImagem} (ID: ${idRegistro})`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Erro ao salvar imagem bytea (${tabela}):`, error);
+    return false;
+  }
+};
+
+// Função para recuperar imagem bytea
+const obterImagemBytea = async (tabela, campoId, idRegistro, campoImagem = 'imagem') => {
+  try {
+    const result = await db.query(
+      `SELECT ${campoImagem}_bytea FROM ${tabela} WHERE ${campoId} = $1`,
+      [idRegistro]
+    );
+    
+    if (result.rows.length > 0 && result.rows[0][`${campoImagem}_bytea`]) {
+      return Buffer.from(result.rows[0][`${campoImagem}_bytea`], 'binary');
+    }
+    return null;
+  } catch (error) {
+    // Se a coluna bytea não existir, não é erro
+    return null;
+  }
+};
+
+// Função para restaurar imagem de bytea para arquivo
+const restaurarImagemBytea = async (tabela, campoId, idRegistro, campoImagem = 'imagem', fileName) => {
+  try {
+    const imagemBuffer = await obterImagemBytea(tabela, campoId, idRegistro, campoImagem);
+    
+    if (imagemBuffer) {
+      const filePath = path.join('public/uploads/', fileName);
+      fs.writeFileSync(filePath, imagemBuffer);
+      console.log(`✅ Imagem restaurada de bytea: ${filePath}`);
+      return filePath;
+    }
+    return null;
+  } catch (error) {
+    console.error(`❌ Erro ao restaurar imagem bytea:`, error);
+    return null;
+  }
+};
 
 // ==================== MIDDLEWARES ====================
 app.set('view engine', 'ejs');
@@ -834,6 +897,12 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
 
     const newUser = result.rows[0];
 
+    // Salvar também como bytea para persistência
+    if (req.file) {
+      const filePath = path.join('public/uploads/perfil/', req.file.filename);
+      await salvarImagemBytea(filePath, 'usuarios', 'id', newUser.id, 'foto_perfil');
+    }
+
     // Auto-login após registro
     req.session.user = {
       id: newUser.id,
@@ -940,6 +1009,11 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
     if (remover_foto === '1' || remover_foto === 'true') {
       if (fotoPerfil) {
         removeProfilePicture(fotoPerfil);
+        // Remover também do bytea
+        await db.query(
+          'UPDATE usuarios SET foto_perfil_bytea = NULL WHERE id = $1',
+          [userId]
+        );
       }
       fotoPerfil = null;
     }
@@ -951,6 +1025,10 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
         removeProfilePicture(fotoPerfil);
       }
       fotoPerfil = req.file.filename;
+      
+      // Salvar também como bytea
+      const filePath = path.join('public/uploads/perfil/', req.file.filename);
+      await salvarImagemBytea(filePath, 'usuarios', 'id', userId, 'foto_perfil');
       
       // Limpar fotos antigas do usuário
       await removeOldProfilePicture(userId, fotoPerfil);
@@ -1618,9 +1696,10 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
       return res.redirect('/vendedor/produto/novo');
     }
 
-    await db.query(`
+    const result = await db.query(`
       INSERT INTO produtos (nome, descricao, preco, preco_promocional, categoria_id, estoque, imagem1, imagem2, imagem3, vendedor_id, destaque, vip)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id
     `, [
       nome.trim(),
       descricao.trim(),
@@ -1635,6 +1714,22 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
       destaque === 'on',
       vip === 'on'
     ]);
+
+    const produtoId = result.rows[0].id;
+
+    // Salvar também como bytea para persistência
+    if (imagem1) {
+      const filePath = path.join('public/uploads/produtos/', imagem1);
+      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem1');
+    }
+    if (imagem2) {
+      const filePath = path.join('public/uploads/produtos/', imagem2);
+      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem2');
+    }
+    if (imagem3) {
+      const filePath = path.join('public/uploads/produtos/', imagem3);
+      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem3');
+    }
 
     req.flash('success', 'Produto cadastrado com sucesso!');
     res.redirect('/vendedor/produtos');
@@ -1772,6 +1867,20 @@ app.put('/vendedor/produto/:id', requireVendor, upload.fields([
       req.session.user.id
     ]);
 
+    // Salvar também como bytea para persistência
+    if (req.files.imagem1) {
+      const filePath = path.join('public/uploads/produtos/', req.files.imagem1[0].filename);
+      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem1');
+    }
+    if (req.files.imagem2) {
+      const filePath = path.join('public/uploads/produtos/', req.files.imagem2[0].filename);
+      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem2');
+    }
+    if (req.files.imagem3) {
+      const filePath = path.join('public/uploads/produtos/', req.files.imagem3[0].filename);
+      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem3');
+    }
+
     req.flash('success', 'Produto atualizado com sucesso!');
     res.redirect('/vendedor/produtos');
   } catch (error) {
@@ -1898,20 +2007,26 @@ const gameUpload = upload.fields([
 
 // ==================== ROTAS QUE FALTAVAM ====================
 
-// 1. CORREÇÃO: Rota para LISTAR jogos no Admin (Resolve o erro ao clicar em Gerir)
-app.get('/admin/jogos', requireAdmin, async (req, res) => {
+app.get('/admin/jogos_lista', requireAdmin, async (req, res) => {
   try {
-    const jogos = await db.query('SELECT * FROM jogos ORDER BY created_at DESC');
-    res.render('admin/jogos_lista', { 
-      jogos: jogos.rows,
-      title: 'Gerenciar Jogos - Admin' 
+    const { rows: jogos } = await db.query(`
+      SELECT *
+      FROM jogos
+      ORDER BY created_at DESC
+    `);
+
+    res.render('admin/jogos', {
+      title: 'Gerir Jogos',
+      jogos
     });
+
   } catch (error) {
-    console.error('Erro ao listar jogos:', error);
-    req.flash('error', 'Erro ao carregar lista de jogos');
+    console.error('Erro ao carregar jogos:', error);
+    req.flash('error', 'Erro ao carregar jogos');
     res.redirect('/admin');
   }
 });
+
 
 // 2. NOVA ROTA: Detalhes do Jogo (Página Pública estilo Steam)
 app.get('/game/:id', async (req, res) => {
@@ -1997,7 +2112,11 @@ app.get('/games', async (req, res) => {
 
 // Form Novo Jogo
 app.get('/admin/jogos/novo', requireAdmin, (req, res) => {
-  res.render('admin/jogo_form', { jogo: null, action: '/admin/jogos' });
+  res.render('admin/jogo_form', { 
+    jogo: null, 
+    action: '/admin/jogos',
+    title: 'Novo Jogo - Admin'
+  });
 });
 
 // Criar Jogo (POST)
@@ -2039,9 +2158,13 @@ app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
     
     res.render('admin/jogo_form', { 
       jogo: jogo.rows[0], 
-      action: `/admin/jogos/${req.params.id}?_method=PUT` 
+      action: `/admin/jogos/${req.params.id}?_method=PUT`,
+      title: 'Editar Jogo - Admin'
     });
-  } catch (e) { res.redirect('/admin/jogos'); }
+  } catch (e) { 
+    console.error('Erro ao carregar jogo para edição:', e);
+    res.redirect('/admin/jogos'); 
+  }
 });
 
 // Atualizar Jogo (PUT)
@@ -2159,6 +2282,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
   }
 });
 
+// CORREÇÃO DA ROTA ADMIN/VENDEDORES
 app.get('/admin/vendedores', requireAdmin, async (req, res) => {
   try {
     const vendedores = await db.query(`
@@ -2185,8 +2309,9 @@ app.get('/admin/vendedores', requireAdmin, async (req, res) => {
       SELECT * FROM planos_vendedor ORDER BY limite_produtos
     `);
 
+    // CORREÇÃO: Passar vendedores como 'vendedores' e não 'vendedor'
     res.render('admin/vendedores', {
-      vendedores: vendedores.rows,
+      vendedores: vendedores.rows,  // CORRIGIDO: de 'vendedor' para 'vendedores'
       planos: planos.rows,
       title: 'Gerenciar Vendedores - KuandaShop'
     });
@@ -2197,6 +2322,30 @@ app.get('/admin/vendedores', requireAdmin, async (req, res) => {
       planos: [],
       title: 'Gerenciar Vendedores'
     });
+  }
+});
+
+// ROTA CORRIGIDA: Atualizar limite de produtos
+app.post('/admin/vendedor/:id/atualizar-limite', requireAdmin, async (req, res) => {
+  try {
+    const { limite_produtos } = req.body;
+    
+    if (!limite_produtos || isNaN(limite_produtos) || parseInt(limite_produtos) < 1) {
+      req.flash('error', 'Limite deve ser um número positivo');
+      return res.redirect('/admin/vendedores');
+    }
+    
+    await db.query(
+      'UPDATE usuarios SET limite_produtos = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [parseInt(limite_produtos), req.params.id]
+    );
+    
+    req.flash('success', 'Limite de produtos atualizado com sucesso!');
+    res.redirect('/admin/vendedores');
+  } catch (error) {
+    console.error('Erro ao atualizar limite:', error);
+    req.flash('error', 'Erro ao atualizar limite');
+    res.redirect('/admin/vendedores');
   }
 });
 
@@ -2673,7 +2822,7 @@ app.get('/admin/plano-info/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== ROTA DE CATEGORIAS (ADICIONAR AO SERVER.JS) ====================
+// ==================== ROTA DE CATEGORIAS ====================
 app.get('/categorias', async (req, res) => {
   try {
     // Buscar tudo em paralelo para ser rápido
@@ -2737,7 +2886,7 @@ app.get('/categorias', async (req, res) => {
   }
 });
 
-// ==================== ROTA DE OFERTAS (CORRIGIDA E ROBUSTA) ====================
+// ==================== ROTA DE OFERTAS ====================
 app.get('/ofertas', async (req, res) => {
   console.log('🔄 Iniciando rota /ofertas...'); // Log para confirmar que a rota foi chamada
 
@@ -2945,6 +3094,13 @@ app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, re
       ordem ? parseInt(ordem) : 0,
       ativo === 'on'
     ]);
+
+    // Salvar também como bytea para persistência
+    const filePath = path.join('public/uploads/banners/', req.file.filename);
+    const banners = await db.query('SELECT id FROM banners WHERE imagem = $1 ORDER BY id DESC LIMIT 1', [req.file.filename]);
+    if (banners.rows.length > 0) {
+      await salvarImagemBytea(filePath, 'banners', 'id', banners.rows[0].id, 'imagem');
+    }
     
     req.flash('success', 'Banner criado com sucesso!');
     res.redirect('/admin/banners');
@@ -3004,6 +3160,10 @@ app.put('/admin/banners/:id', requireAdmin, upload.single('imagem'), async (req,
         fs.unlinkSync(oldPath);
       }
       imagem = req.file.filename;
+      
+      // Salvar nova imagem como bytea
+      const newPath = path.join('public/uploads/banners/', req.file.filename);
+      await salvarImagemBytea(newPath, 'banners', 'id', req.params.id, 'imagem');
     }
     
     await db.query(`
@@ -3130,6 +3290,13 @@ app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res
       classificacao ? classificacao.trim() : null,
       ativo === 'on'
     ]);
+
+    // Salvar também como bytea para persistência
+    const filePath = path.join('public/uploads/filmes/', req.file.filename);
+    const filmes = await db.query('SELECT id FROM filmes WHERE poster = $1 ORDER BY id DESC LIMIT 1', [req.file.filename]);
+    if (filmes.rows.length > 0) {
+      await salvarImagemBytea(filePath, 'filmes', 'id', filmes.rows[0].id, 'poster');
+    }
     
     req.flash('success', 'Filme adicionado com sucesso!');
     res.redirect('/admin/filmes');
@@ -3190,6 +3357,10 @@ app.put('/admin/filmes/:id', requireAdmin, upload.single('poster'), async (req, 
         }
       }
       poster = req.file.filename;
+      
+      // Salvar nova imagem como bytea
+      const newPath = path.join('public/uploads/filmes/', req.file.filename);
+      await salvarImagemBytea(newPath, 'filmes', 'id', req.params.id, 'poster');
     }
     
     await db.query(`
@@ -3418,95 +3589,6 @@ app.delete('/admin/categorias/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== GERENCIAMENTO DE PLANOS ====================
-app.get('/admin/planos', requireAdmin, async (req, res) => {
-  try {
-    const [planos, vendedoresPorPlano, vendedoresSemPlano, statsResult] = await Promise.all([
-      db.query(`
-        SELECT pv.*, COUNT(u.id) as total_vendedores
-        FROM planos_vendedor pv
-        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
-        GROUP BY pv.id
-        ORDER BY pv.limite_produtos
-      `),
-      // Vendedores agrupados por plano
-      db.query(`
-        SELECT 
-          pv.nome as plano_nome,
-          pv.id as plano_id,
-          json_agg(
-            json_build_object(
-              'id', u.id,
-              'nome', u.nome,
-              'nome_loja', u.nome_loja,
-              'email', u.email,
-              'telefone', u.telefone,
-              'foto_perfil', u.foto_perfil,
-              'loja_ativa', u.loja_ativa,
-              'created_at', u.created_at,
-              'plano_id', u.plano_id,
-              'limite_produtos', u.limite_produtos,
-              'total_produtos', (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id)
-            )
-          ) as vendedores
-        FROM planos_vendedor pv
-        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
-        WHERE u.id IS NOT NULL
-        GROUP BY pv.id, pv.nome
-        ORDER BY pv.limite_produtos
-      `),
-      // Vendedores sem plano
-      db.query(`
-        SELECT 
-          u.*,
-          (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id) as total_produtos
-        FROM usuarios u
-        WHERE u.tipo = 'vendedor' 
-          AND (u.plano_id IS NULL OR u.plano_id = 0)
-        ORDER BY u.created_at DESC
-      `),
-      // Estatísticas
-      db.query(`
-        SELECT 
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND loja_ativa = true) as vendedores_ativos,
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND plano_id IS NOT NULL) as vendedores_com_plano,
-          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)) as vendedores_sem_plano,
-          (SELECT COUNT(*) FROM planos_vendedor) as total_planos
-      `)
-    ]);
-
-    // Corrigir a estrutura dos dados
-    const stats = statsResult.rows[0] || {
-      vendedores_ativos: 0,
-      vendedores_com_plano: 0,
-      vendedores_sem_plano: 0,
-      total_planos: 0
-    };
-
-    res.render('admin/planos', {
-      planos: planos.rows,
-      vendedoresPorPlano: vendedoresPorPlano.rows,
-      vendedoresSemPlano: vendedoresSemPlano.rows,
-      stats: stats, // Nome correto da variável
-      title: 'Gerenciar Planos - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar planos:', error);
-    res.render('admin/planos', { 
-      planos: [],
-      vendedoresPorPlano: [],
-      vendedoresSemPlano: [],
-      stats: {
-        vendedores_ativos: 0,
-        vendedores_com_plano: 0,
-        vendedores_sem_plano: 0,
-        total_planos: 0
-      },
-      title: 'Gerenciar Planos de Vendedores'
-    });
-  }
-});
-
 // ==================== ROTA PARA MIGRAÇÃO DOS PLANOS ====================
 app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
   try {
@@ -3573,42 +3655,65 @@ app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== TRATAMENTO DE ERROS (BLINDADO) ====================
+// ==================== ROTA DE RESTAURAÇÃO DE IMAGENS ====================
+app.get('/admin/restaurar-imagens', requireAdmin, async (req, res) => {
+  try {
+    // Restaurar imagens de produtos
+    const produtos = await db.query('SELECT id, imagem1, imagem2, imagem3 FROM produtos');
+    let produtosRestaurados = 0;
+    
+    for (const produto of produtos.rows) {
+      if (produto.imagem1) {
+        const sucesso = await restaurarImagemBytea('produtos', 'id', produto.id, 'imagem1', `produtos/${produto.imagem1}`);
+        if (sucesso) produtosRestaurados++;
+      }
+    }
+    
+    // Restaurar fotos de perfil
+    const usuarios = await db.query('SELECT id, foto_perfil FROM usuarios WHERE foto_perfil IS NOT NULL');
+    let perfisRestaurados = 0;
+    
+    for (const usuario of usuarios.rows) {
+      const sucesso = await restaurarImagemBytea('usuarios', 'id', usuario.id, 'foto_perfil', `perfil/${usuario.foto_perfil}`);
+      if (sucesso) perfisRestaurados++;
+    }
+    
+    req.flash('success', `Restauradas ${produtosRestaurados} imagens de produtos e ${perfisRestaurados} fotos de perfil do bytea.`);
+    res.redirect('/admin');
+  } catch (error) {
+    console.error('Erro ao restaurar imagens:', error);
+    req.flash('error', 'Erro ao restaurar imagens: ' + error.message);
+    res.redirect('/admin');
+  }
+});
+
+// ==================== TRATAMENTO DE ERROS ====================
 
 // 1. Erro 404 - Página não encontrada
 app.use((req, res) => {
-  // Acesso seguro ao usuário (previne erro se o banco cair)
-  const safeUser = (req.session && req.session.user) ? req.session.user : null;
-
   res.status(404).render('404', {
     layout: false,
     title: '404 - Página não encontrada',
-    user: safeUser, // Passa como 'user' ou 'currentUser' dependendo da sua view
-    currentUser: safeUser
+    user: req.session.user || null
   });
 });
 
 // 2. Erros do Multer (Upload)
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    // Só tenta usar flash se a sessão estiver ativa
-    if (req.session && typeof req.flash === 'function') {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        req.flash('error', 'Arquivo muito grande. Tamanho máximo: 5MB');
-      } else {
-        req.flash('error', `Erro no upload: ${err.message}`);
-      }
-      return res.redirect('back');
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      req.flash('error', 'Arquivo muito grande. Tamanho máximo: 5MB');
+    } else {
+      req.flash('error', `Erro no upload: ${err.message}`);
     }
-    // Se a sessão caiu, passa para o erro 500 tratar
-    return next(err);
+    return res.redirect('back');
   }
   
   // Se não for erro do Multer, passa para o próximo
   next(err);
 });
 
-// 3. Erro 500 - Erro Interno (Onde ocorria a falha crítica)
+// 3. Erro 500 - Erro Interno
 app.use((err, req, res, next) => {
   console.error('❌ ERRO CRÍTICO NO SERVIDOR:', err);
   
@@ -3617,27 +3722,12 @@ app.use((err, req, res, next) => {
     return next(err);
   }
 
-  // Tenta limpar a sessão APENAS se ela existir
-  // Isso corrige o erro: "Cannot read properties of undefined (reading 'destroy')"
-  if (req.session && typeof req.session.destroy === 'function') {
-    // Se for erro de sessão/banco ou flash, tenta destruir a sessão corrompida
-    if (err.code === '08P01' || err.code === 'ECONNREFUSED' || (err.message && err.message.includes('flash'))) {
-      req.session.destroy((destroyErr) => {
-        if (destroyErr) console.error('Erro secundário ao destruir sessão:', destroyErr);
-      });
-    }
-  }
-
-  // Define um usuário nulo para a view não quebrar
-  const safeUser = (req.session && req.session.user) ? req.session.user : null;
-
   res.status(500).render('500', {
     layout: false,
     title: '500 - Erro interno do servidor',
     // Mostra o erro detalhado apenas em desenvolvimento
     error: process.env.NODE_ENV === 'development' ? err : { message: 'Ocorreu um erro inesperado. Tente novamente.' },
-    user: safeUser,
-    currentUser: safeUser
+    user: req.session.user || null
   });
 });
 
@@ -3650,9 +3740,10 @@ const server = app.listen(PORT, () => {
   ✅ Sistema inicializado com sucesso!
   ✅ Banco de dados conectado
   ✅ Sessões configuradas no PostgreSQL
-  ✅ Uploads configurados
+  ✅ Uploads configurados (arquivos + bytea)
   ✅ Painéis administrativos prontos
   ✅ Sistema de planos implementado
+  ✅ Imagens persistentes via bytea
   
   📍 Porta: ${PORT}
   🌐 Ambiente: ${process.env.NODE_ENV || 'development'}
@@ -3674,8 +3765,10 @@ const server = app.listen(PORT, () => {
     • Sistema de VIP/destaque
     • Seguidores de lojas
     • Sistema de planos com limites
+    • Loja de jogos completa
+    • IMAGENS PERSISTENTES (arquivo + bytea)
   
-  💡 Dica: Acesse /admin/migrar-planos para configurar planos
+  💡 Recuperação de imagens: /admin/restaurar-imagens
   
   ====================================================
   `);
