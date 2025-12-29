@@ -10,10 +10,301 @@ const db = require('./config/database');
 const expressLayouts = require('express-ejs-layouts');
 const fs = require('fs');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ==================== CRIAÇÃO DA TABELA DE BACKUP DE IMAGENS ====================
+// (Execute esta query no seu banco de dados PostgreSQL)
+
+/*
+CREATE TABLE IF NOT EXISTS imagens_backup (
+    id SERIAL PRIMARY KEY,
+    nome_arquivo VARCHAR(500) UNIQUE NOT NULL,
+    caminho_arquivo VARCHAR(1000) NOT NULL,
+    dados_imagem BYTEA NOT NULL,
+    tipo_mime VARCHAR(100) NOT NULL,
+    tamanho INTEGER NOT NULL,
+    tabela_origem VARCHAR(100),
+    registro_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_imagens_backup_nome_arquivo ON imagens_backup(nome_arquivo);
+CREATE INDEX IF NOT EXISTS idx_imagens_backup_tabela_registro ON imagens_backup(tabela_origem, registro_id);
+*/
+
+// ==================== FUNÇÕES DE BACKUP/RECUPERAÇÃO HÍBRIDA ====================
+
+/**
+ * Salva uma imagem no backup BYTEA
+ * @param {string} filePath - Caminho completo do arquivo
+ * @param {string} fileName - Nome do arquivo
+ * @param {string} tabelaOrigem - Tabela de origem (ex: 'produtos', 'usuarios')
+ * @param {number} registroId - ID do registro relacionado
+ * @returns {Promise<boolean>} - Sucesso da operação
+ */
+const salvarBackupImagem = async (filePath, fileName, tabelaOrigem = null, registroId = null) => {
+    try {
+        if (!fs.existsSync(filePath)) {
+            console.error(`❌ Arquivo não encontrado para backup: ${filePath}`);
+            return false;
+        }
+
+        // Ler arquivo
+        const imagemBuffer = fs.readFileSync(filePath);
+        const stats = fs.statSync(filePath);
+        
+        // Detectar tipo MIME
+        const mimeType = getMimeType(filePath);
+        
+        // Gerar caminho relativo para fácil recuperação
+        const caminhoRelativo = filePath.replace('public/', '');
+        
+        // Inserir no banco de dados
+        await db.query(
+            `INSERT INTO imagens_backup 
+             (nome_arquivo, caminho_arquivo, dados_imagem, tipo_mime, tamanho, tabela_origem, registro_id) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (nome_arquivo) 
+             DO UPDATE SET 
+                dados_imagem = EXCLUDED.dados_imagem,
+                caminho_arquivo = EXCLUDED.caminho_arquivo,
+                tipo_mime = EXCLUDED.tipo_mime,
+                tamanho = EXCLUDED.tamanho,
+                tabela_origem = EXCLUDED.tabela_origem,
+                registro_id = EXCLUDED.registro_id`,
+            [
+                fileName,
+                caminhoRelativo,
+                imagemBuffer,
+                mimeType,
+                stats.size,
+                tabelaOrigem,
+                registroId
+            ]
+        );
+        
+        console.log(`✅ Backup BYTEA salvo: ${fileName} (${(stats.size / 1024).toFixed(2)} KB)`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Erro ao salvar backup BYTEA (${fileName}):`, error);
+        return false;
+    }
+};
+
+/**
+ * Recupera uma imagem do backup BYTEA
+ * @param {string} fileName - Nome do arquivo a ser recuperado
+ * @returns {Promise<object|null>} - Dados da imagem ou null se não encontrada
+ */
+const recuperarImagemBackup = async (fileName) => {
+    try {
+        const result = await db.query(
+            `SELECT dados_imagem, tipo_mime, caminho_arquivo 
+             FROM imagens_backup 
+             WHERE nome_arquivo = $1`,
+            [fileName]
+        );
+        
+        if (result.rows.length > 0 && result.rows[0].dados_imagem) {
+            const imagemData = result.rows[0];
+            console.log(`✅ Imagem recuperada do backup BYTEA: ${fileName}`);
+            return {
+                buffer: imagemData.dados_imagem,
+                mimeType: imagemData.tipo_mime || 'image/jpeg',
+                caminho: imagemData.caminho_arquivo
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error(`❌ Erro ao recuperar imagem do backup (${fileName}):`, error);
+        return null;
+    }
+};
+
+/**
+ * Recria arquivo no disco a partir do backup BYTEA
+ * @param {string} fileName - Nome do arquivo
+ * @param {string} outputPath - Caminho completo de saída (opcional)
+ * @returns {Promise<string|null>} - Caminho do arquivo recriado ou null
+ */
+const recriarArquivoDoBackup = async (fileName, outputPath = null) => {
+    try {
+        const imagemData = await recuperarImagemBackup(fileName);
+        
+        if (!imagemData) {
+            return null;
+        }
+        
+        // Determinar caminho de saída
+        let filePath;
+        if (outputPath) {
+            filePath = outputPath;
+        } else {
+            // Usar caminho original ou padrão
+            if (imagemData.caminho) {
+                filePath = path.join('public', imagemData.caminho);
+            } else {
+                // Tentar determinar baseado no nome do arquivo
+                if (fileName.includes('banner')) {
+                    filePath = path.join('public/uploads/banners/', fileName);
+                } else if (fileName.includes('perfil')) {
+                    filePath = path.join('public/uploads/perfil/', fileName);
+                } else if (fileName.includes('filme') || fileName.includes('poster')) {
+                    filePath = path.join('public/uploads/filmes/', fileName);
+                } else if (fileName.includes('game') || fileName.includes('capa') || fileName.includes('screenshot')) {
+                    filePath = path.join('public/uploads/games/', fileName);
+                } else {
+                    filePath = path.join('public/uploads/produtos/', fileName);
+                }
+            }
+        }
+        
+        // Garantir que o diretório existe
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        // Escrever arquivo
+        fs.writeFileSync(filePath, imagemData.buffer);
+        console.log(`✅ Arquivo recriado do backup: ${filePath}`);
+        
+        return filePath;
+    } catch (error) {
+        console.error(`❌ Erro ao recriar arquivo do backup (${fileName}):`, error);
+        return null;
+    }
+};
+
+/**
+ * Função auxiliar para detectar MIME type baseado na extensão
+ * @param {string} filePath - Caminho do arquivo
+ * @returns {string} - Tipo MIME
+ */
+const getMimeType = (filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml'
+    };
+    return mimeTypes[ext] || 'application/octet-stream';
+};
+
+/**
+ * Função para limpar backups antigos (opcional, para manutenção)
+ * @param {number} daysOld - Dias para considerar como antigo
+ * @returns {Promise<number>} - Número de registros removidos
+ */
+const limparBackupsAntigos = async (daysOld = 30) => {
+    try {
+        const result = await db.query(
+            `DELETE FROM imagens_backup 
+             WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '${daysOld} days'
+             RETURNING id`
+        );
+        console.log(`🧹 ${result.rowCount} backups antigos removidos`);
+        return result.rowCount;
+    } catch (error) {
+        console.error('❌ Erro ao limpar backups antigos:', error);
+        return 0;
+    }
+};
+
+// ==================== ROTA MAGIC FALLBACK (DEVE VIR ANTES DO express.static) ====================
+
+/**
+ * ROTA DE FALLBACK INTELIGENTE PARA UPLOADS
+ * Esta rota intercepta requisições para /uploads/* e implementa a lógica híbrida:
+ * 1. Tenta servir do disco (performance máxima)
+ * 2. Se não encontrar no disco, busca no banco BYTEA
+ * 3. Se achar no banco, serve e opcionalmente recria no disco
+ */
+app.get('/uploads/:pasta?/:arquivo?', async (req, res) => {
+    try {
+        let filePath;
+        const { pasta, arquivo } = req.params;
+        
+        // Construir caminho baseado nos parâmetros
+        if (pasta && arquivo) {
+            filePath = path.join('public/uploads', pasta, arquivo);
+        } else if (!pasta && arquivo) {
+            // Se chamar diretamente /uploads/arquivo (sem pasta)
+            filePath = path.join('public/uploads', arquivo);
+            
+            // Verificar se é um dos padrões conhecidos
+            if (arquivo.includes('banner')) {
+                filePath = path.join('public/uploads/banners', arquivo);
+            } else if (arquivo.includes('perfil')) {
+                filePath = path.join('public/uploads/perfil', arquivo);
+            } else if (arquivo.includes('filme') || arquivo.includes('poster')) {
+                filePath = path.join('public/uploads/filmes', arquivo);
+            } else if (arquivo.includes('game') || arquivo.includes('capa') || arquivo.includes('screenshot')) {
+                filePath = path.join('public/uploads/games', arquivo);
+            } else {
+                filePath = path.join('public/uploads/produtos', arquivo);
+            }
+        } else {
+            // URL mal formada
+            return res.status(400).send('URL de imagem inválida');
+        }
+        
+        // 1º: Verifica se o arquivo físico existe no disco
+        if (fs.existsSync(filePath)) {
+            // Servir diretamente do disco (performance nativa)
+            return res.sendFile(path.resolve(filePath), {
+                headers: {
+                    'Content-Type': getMimeType(filePath),
+                    'Cache-Control': 'public, max-age=86400' // Cache de 1 dia
+                }
+            });
+        }
+        
+        console.log(`🔄 Arquivo não encontrado no disco: ${filePath}. Buscando no backup BYTEA...`);
+        
+        // 2º: Buscar no banco de dados BYTEA
+        const fileName = arquivo;
+        const imagemData = await recuperarImagemBackup(fileName);
+        
+        if (imagemData) {
+            // 3º: Encontrou no banco! Enviar dados binários
+            console.log(`✅ Imagem encontrada no backup: ${fileName}`);
+            
+            // Opcional: Recriar arquivo no disco para futuras requisições
+            if (process.env.RECRIAR_ARQUIVOS === 'true') {
+                setTimeout(async () => {
+                    await recriarArquivoDoBackup(fileName, filePath);
+                }, 0); // Faz de forma assíncrona para não bloquear a resposta
+            }
+            
+            // Enviar imagem com headers apropriados
+            res.set({
+                'Content-Type': imagemData.mimeType,
+                'Content-Length': imagemData.buffer.length,
+                'Cache-Control': 'public, max-age=86400',
+                'X-Image-Source': 'database-backup'
+            });
+            
+            return res.send(imagemData.buffer);
+        }
+        
+        // 4º: Não encontrou em lugar nenhum
+        console.log(`❌ Imagem não encontrada: ${fileName}`);
+        res.status(404).send('Imagem não encontrada');
+        
+    } catch (error) {
+        console.error('❌ Erro na rota de fallback de imagens:', error);
+        res.status(500).send('Erro interno do servidor');
+    }
+});
 
 // ==================== CONFIGURAÇÃO DE DIRETÓRIOS ====================
 const uploadDirs = [
@@ -104,74 +395,55 @@ const uploadPerfil = multer({
   fileFilter: fileFilter
 });
 
-// ==================== CONFIGURAÇÃO BYTEA PARA IMAGENS PERSISTENTES ====================
+// ==================== FUNÇÃO AUXILIAR PARA SALVAR BACKUP APÓS UPLOAD ====================
 
-// Função para salvar também como bytea no banco de dados
-const salvarImagemBytea = async (filePath, tabela, campoId, idRegistro, campoImagem = 'imagem') => {
-  try {
-    if (!fs.existsSync(filePath)) {
-      console.error(`Arquivo não encontrado: ${filePath}`);
-      return false;
+/**
+ * Processa uploads salvando automaticamente no backup BYTEA
+ * @param {Object} req - Request object
+ * @param {Object} res - Response object
+ * @param {string} tabelaOrigem - Tabela de origem
+ * @param {number} registroId - ID do registro
+ */
+const processarUploadComBackup = async (req, res, tabelaOrigem, registroId) => {
+    try {
+        // Processar arquivos enviados
+        const files = req.files || {};
+        
+        // Se for upload de arquivo único
+        if (req.file) {
+            const filePath = req.file.path;
+            const fileName = req.file.filename;
+            
+            console.log(`📁 Processando backup para: ${fileName}`);
+            
+            // Salvar no backup BYTEA
+            await salvarBackupImagem(filePath, fileName, tabelaOrigem, registroId);
+        }
+        
+        // Se for múltiplos arquivos
+        if (Object.keys(files).length > 0) {
+            for (const fieldname in files) {
+                const fileArray = files[fieldname];
+                if (fileArray && fileArray.length > 0) {
+                    for (const file of fileArray) {
+                        console.log(`📁 Processando backup para: ${file.filename}`);
+                        await salvarBackupImagem(file.path, file.filename, tabelaOrigem, registroId);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('❌ Erro no processamento de backup:', error);
+        // Não interrompe o fluxo principal se o backup falhar
     }
-    
-    const imagemBuffer = fs.readFileSync(filePath);
-    const bytea = imagemBuffer.toString('binary');
-    
-    await db.query(
-      `UPDATE ${tabela} SET ${campoImagem}_bytea = $1 WHERE ${campoId} = $2`,
-      [bytea, idRegistro]
-    );
-    
-    console.log(`✅ Imagem salva como bytea para ${tabela}.${campoImagem} (ID: ${idRegistro})`);
-    return true;
-  } catch (error) {
-    console.error(`❌ Erro ao salvar imagem bytea (${tabela}):`, error);
-    return false;
-  }
-};
-
-// Função para recuperar imagem bytea
-const obterImagemBytea = async (tabela, campoId, idRegistro, campoImagem = 'imagem') => {
-  try {
-    const result = await db.query(
-      `SELECT ${campoImagem}_bytea FROM ${tabela} WHERE ${campoId} = $1`,
-      [idRegistro]
-    );
-    
-    if (result.rows.length > 0 && result.rows[0][`${campoImagem}_bytea`]) {
-      return Buffer.from(result.rows[0][`${campoImagem}_bytea`], 'binary');
-    }
-    return null;
-  } catch (error) {
-    // Se a coluna bytea não existir, não é erro
-    return null;
-  }
-};
-
-// Função para restaurar imagem de bytea para arquivo
-const restaurarImagemBytea = async (tabela, campoId, idRegistro, campoImagem = 'imagem', fileName) => {
-  try {
-    const imagemBuffer = await obterImagemBytea(tabela, campoId, idRegistro, campoImagem);
-    
-    if (imagemBuffer) {
-      const filePath = path.join('public/uploads/', fileName);
-      fs.writeFileSync(filePath, imagemBuffer);
-      console.log(`✅ Imagem restaurada de bytea: ${filePath}`);
-      return filePath;
-    }
-    return null;
-  } catch (error) {
-    console.error(`❌ Erro ao restaurar imagem bytea:`, error);
-    return null;
-  }
 };
 
 // ==================== MIDDLEWARES ====================
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+// IMPORTANTE: express.static deve vir DEPOIS da nossa rota de fallback
 app.use(express.static('public'));
-app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -897,10 +1169,10 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
 
     const newUser = result.rows[0];
 
-    // Salvar também como bytea para persistência
+    // SALVAR BACKUP BYTEA DA FOTO DE PERFIL
     if (req.file) {
       const filePath = path.join('public/uploads/perfil/', req.file.filename);
-      await salvarImagemBytea(filePath, 'usuarios', 'id', newUser.id, 'foto_perfil');
+      await salvarBackupImagem(filePath, req.file.filename, 'usuarios', newUser.id);
     }
 
     // Auto-login após registro
@@ -1009,11 +1281,6 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
     if (remover_foto === '1' || remover_foto === 'true') {
       if (fotoPerfil) {
         removeProfilePicture(fotoPerfil);
-        // Remover também do bytea
-        await db.query(
-          'UPDATE usuarios SET foto_perfil_bytea = NULL WHERE id = $1',
-          [userId]
-        );
       }
       fotoPerfil = null;
     }
@@ -1026,9 +1293,9 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
       }
       fotoPerfil = req.file.filename;
       
-      // Salvar também como bytea
+      // SALVAR BACKUP BYTEA DA NOVA FOTO
       const filePath = path.join('public/uploads/perfil/', req.file.filename);
-      await salvarImagemBytea(filePath, 'usuarios', 'id', userId, 'foto_perfil');
+      await salvarBackupImagem(filePath, req.file.filename, 'usuarios', userId);
       
       // Limpar fotos antigas do usuário
       await removeOldProfilePicture(userId, fotoPerfil);
@@ -1717,19 +1984,8 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
 
     const produtoId = result.rows[0].id;
 
-    // Salvar também como bytea para persistência
-    if (imagem1) {
-      const filePath = path.join('public/uploads/produtos/', imagem1);
-      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem1');
-    }
-    if (imagem2) {
-      const filePath = path.join('public/uploads/produtos/', imagem2);
-      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem2');
-    }
-    if (imagem3) {
-      const filePath = path.join('public/uploads/produtos/', imagem3);
-      await salvarImagemBytea(filePath, 'produtos', 'id', produtoId, 'imagem3');
-    }
+    // SALVAR BACKUP BYTEA DAS IMAGENS
+    await processarUploadComBackup(req, res, 'produtos', produtoId);
 
     req.flash('success', 'Produto cadastrado com sucesso!');
     res.redirect('/vendedor/produtos');
@@ -1867,19 +2123,8 @@ app.put('/vendedor/produto/:id', requireVendor, upload.fields([
       req.session.user.id
     ]);
 
-    // Salvar também como bytea para persistência
-    if (req.files.imagem1) {
-      const filePath = path.join('public/uploads/produtos/', req.files.imagem1[0].filename);
-      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem1');
-    }
-    if (req.files.imagem2) {
-      const filePath = path.join('public/uploads/produtos/', req.files.imagem2[0].filename);
-      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem2');
-    }
-    if (req.files.imagem3) {
-      const filePath = path.join('public/uploads/produtos/', req.files.imagem3[0].filename);
-      await salvarImagemBytea(filePath, 'produtos', 'id', req.params.id, 'imagem3');
-    }
+    // SALVAR BACKUP BYTEA DAS NOVAS IMAGENS
+    await processarUploadComBackup(req, res, 'produtos', req.params.id);
 
     req.flash('success', 'Produto atualizado com sucesso!');
     res.redirect('/vendedor/produtos');
@@ -2027,7 +2272,6 @@ app.get('/admin/jogos', requireAdmin, async (req, res) => {
   }
 });
 
-
 // 2. NOVA ROTA: Detalhes do Jogo (Página Pública estilo Steam)
 app.get('/game/:id', async (req, res) => {
   try {
@@ -2131,15 +2375,21 @@ app.post('/admin/jogos', requireAdmin, gameUpload, async (req, res) => {
     // Processar screenshots
     const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : [];
 
-    await db.query(`
+    const result = await db.query(`
       INSERT INTO jogos 
       (titulo, capa, banner, screenshots, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id
     `, [
       titulo, capa, banner, screenshots, 
       parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
       descricao, requisitos, desenvolvedor, classificacao, ativo === 'on'
     ]);
+
+    const jogoId = result.rows[0].id;
+
+    // SALVAR BACKUP BYTEA DAS IMAGENS DO JOGO
+    await processarUploadComBackup(req, res, 'jogos', jogoId);
 
     req.flash('success', 'Jogo publicado com sucesso!');
     res.redirect('/admin/jogos');
@@ -2193,6 +2443,9 @@ app.put('/admin/jogos/:id', requireAdmin, gameUpload, async (req, res) => {
       descricao, requisitos, desenvolvedor, classificacao, ativo === 'on', 
       req.params.id
     ]);
+
+    // SALVAR BACKUP BYTEA DAS NOVAS IMAGENS
+    await processarUploadComBackup(req, res, 'jogos', req.params.id);
 
     req.flash('success', 'Jogo atualizado!');
     res.redirect('/admin/jogos');
@@ -3084,9 +3337,10 @@ app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, re
       return res.redirect('/admin/banners/novo');
     }
 
-    await db.query(`
+    const result = await db.query(`
       INSERT INTO banners (titulo, imagem, link, ordem, ativo)
       VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
     `, [
       titulo ? titulo.trim() : null,
       req.file.filename,
@@ -3095,12 +3349,11 @@ app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, re
       ativo === 'on'
     ]);
 
-    // Salvar também como bytea para persistência
+    const bannerId = result.rows[0].id;
+
+    // SALVAR BACKUP BYTEA DA IMAGEM DO BANNER
     const filePath = path.join('public/uploads/banners/', req.file.filename);
-    const banners = await db.query('SELECT id FROM banners WHERE imagem = $1 ORDER BY id DESC LIMIT 1', [req.file.filename]);
-    if (banners.rows.length > 0) {
-      await salvarImagemBytea(filePath, 'banners', 'id', banners.rows[0].id, 'imagem');
-    }
+    await salvarBackupImagem(filePath, req.file.filename, 'banners', bannerId);
     
     req.flash('success', 'Banner criado com sucesso!');
     res.redirect('/admin/banners');
@@ -3161,9 +3414,9 @@ app.put('/admin/banners/:id', requireAdmin, upload.single('imagem'), async (req,
       }
       imagem = req.file.filename;
       
-      // Salvar nova imagem como bytea
+      // SALVAR BACKUP BYTEA DA NOVA IMAGEM
       const newPath = path.join('public/uploads/banners/', req.file.filename);
-      await salvarImagemBytea(newPath, 'banners', 'id', req.params.id, 'imagem');
+      await salvarBackupImagem(newPath, req.file.filename, 'banners', req.params.id);
     }
     
     await db.query(`
@@ -3278,9 +3531,10 @@ app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res
       return res.redirect('/admin/filmes/novo');
     }
 
-    await db.query(`
+    const result = await db.query(`
       INSERT INTO filmes (titulo, poster, trailer_url, sinopse, data_lancamento, classificacao, ativo)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id
     `, [
       titulo.trim(),
       req.file.filename,
@@ -3291,12 +3545,11 @@ app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res
       ativo === 'on'
     ]);
 
-    // Salvar também como bytea para persistência
+    const filmeId = result.rows[0].id;
+
+    // SALVAR BACKUP BYTEA DO POSTER DO FILME
     const filePath = path.join('public/uploads/filmes/', req.file.filename);
-    const filmes = await db.query('SELECT id FROM filmes WHERE poster = $1 ORDER BY id DESC LIMIT 1', [req.file.filename]);
-    if (filmes.rows.length > 0) {
-      await salvarImagemBytea(filePath, 'filmes', 'id', filmes.rows[0].id, 'poster');
-    }
+    await salvarBackupImagem(filePath, req.file.filename, 'filmes', filmeId);
     
     req.flash('success', 'Filme adicionado com sucesso!');
     res.redirect('/admin/filmes');
@@ -3358,9 +3611,9 @@ app.put('/admin/filmes/:id', requireAdmin, upload.single('poster'), async (req, 
       }
       poster = req.file.filename;
       
-      // Salvar nova imagem como bytea
+      // SALVAR BACKUP BYTEA DO NOVO POSTER
       const newPath = path.join('public/uploads/filmes/', req.file.filename);
-      await salvarImagemBytea(newPath, 'filmes', 'id', req.params.id, 'poster');
+      await salvarBackupImagem(newPath, req.file.filename, 'filmes', req.params.id);
     }
     
     await db.query(`
@@ -3664,7 +3917,15 @@ app.get('/admin/restaurar-imagens', requireAdmin, async (req, res) => {
     
     for (const produto of produtos.rows) {
       if (produto.imagem1) {
-        const sucesso = await restaurarImagemBytea('produtos', 'id', produto.id, 'imagem1', `produtos/${produto.imagem1}`);
+        const sucesso = await recriarArquivoDoBackup(produto.imagem1, path.join('public/uploads/produtos/', produto.imagem1));
+        if (sucesso) produtosRestaurados++;
+      }
+      if (produto.imagem2) {
+        const sucesso = await recriarArquivoDoBackup(produto.imagem2, path.join('public/uploads/produtos/', produto.imagem2));
+        if (sucesso) produtosRestaurados++;
+      }
+      if (produto.imagem3) {
+        const sucesso = await recriarArquivoDoBackup(produto.imagem3, path.join('public/uploads/produtos/', produto.imagem3));
         if (sucesso) produtosRestaurados++;
       }
     }
@@ -3674,11 +3935,50 @@ app.get('/admin/restaurar-imagens', requireAdmin, async (req, res) => {
     let perfisRestaurados = 0;
     
     for (const usuario of usuarios.rows) {
-      const sucesso = await restaurarImagemBytea('usuarios', 'id', usuario.id, 'foto_perfil', `perfil/${usuario.foto_perfil}`);
+      const sucesso = await recriarArquivoDoBackup(usuario.foto_perfil, path.join('public/uploads/perfil/', usuario.foto_perfil));
       if (sucesso) perfisRestaurados++;
     }
     
-    req.flash('success', `Restauradas ${produtosRestaurados} imagens de produtos e ${perfisRestaurados} fotos de perfil do bytea.`);
+    // Restaurar banners
+    const banners = await db.query('SELECT id, imagem FROM banners WHERE imagem IS NOT NULL');
+    let bannersRestaurados = 0;
+    
+    for (const banner of banners.rows) {
+      const sucesso = await recriarArquivoDoBackup(banner.imagem, path.join('public/uploads/banners/', banner.imagem));
+      if (sucesso) bannersRestaurados++;
+    }
+    
+    // Restaurar filmes
+    const filmes = await db.query('SELECT id, poster FROM filmes WHERE poster IS NOT NULL');
+    let filmesRestaurados = 0;
+    
+    for (const filme of filmes.rows) {
+      const sucesso = await recriarArquivoDoBackup(filme.poster, path.join('public/uploads/filmes/', filme.poster));
+      if (sucesso) filmesRestaurados++;
+    }
+    
+    // Restaurar jogos
+    const jogos = await db.query('SELECT id, capa, banner, screenshots FROM jogos');
+    let jogosRestaurados = 0;
+    
+    for (const jogo of jogos.rows) {
+      if (jogo.capa) {
+        const sucesso = await recriarArquivoDoBackup(jogo.capa, path.join('public/uploads/games/', jogo.capa));
+        if (sucesso) jogosRestaurados++;
+      }
+      if (jogo.banner) {
+        const sucesso = await recriarArquivoDoBackup(jogo.banner, path.join('public/uploads/games/', jogo.banner));
+        if (sucesso) jogosRestaurados++;
+      }
+      if (jogo.screenshots && Array.isArray(jogo.screenshots)) {
+        for (const screenshot of jogo.screenshots) {
+          const sucesso = await recriarArquivoDoBackup(screenshot, path.join('public/uploads/games/', screenshot));
+          if (sucesso) jogosRestaurados++;
+        }
+      }
+    }
+    
+    req.flash('success', `Restauradas ${produtosRestaurados} imagens de produtos, ${perfisRestaurados} fotos de perfil, ${bannersRestaurados} banners, ${filmesRestaurados} posters de filmes e ${jogosRestaurados} imagens de jogos do backup BYTEA.`);
     res.redirect('/admin');
   } catch (error) {
     console.error('Erro ao restaurar imagens:', error);
@@ -3743,12 +4043,20 @@ const server = app.listen(PORT, () => {
   ✅ Uploads configurados (arquivos + bytea)
   ✅ Painéis administrativos prontos
   ✅ Sistema de planos implementado
-  ✅ Imagens persistentes via bytea
+  ✅ IMAGENS HÍBRIDAS PERSISTENTES IMPLEMENTADAS!
   
   📍 Porta: ${PORT}
   🌐 Ambiente: ${process.env.NODE_ENV || 'development'}
   🔗 URL: http://localhost:${PORT}
   
+  🖼️  SISTEMA DE IMAGENS HÍBRIDO ATIVO:
+    • Upload normal no disco (public/uploads/)
+    • Backup automático BYTEA no PostgreSQL
+    • Rota de fallback inteligente: /uploads/*
+    • Performance máxima: serve do disco quando existe
+    • Recuperação automática: busca no banco quando não existe
+    • Views EJS NÃO PRECISAM SER ALTERADAS!
+    
   👤 Credenciais Admin:
     Email: admin@kuandashop.ao
     Senha: password
@@ -3766,9 +4074,10 @@ const server = app.listen(PORT, () => {
     • Seguidores de lojas
     • Sistema de planos com limites
     • Loja de jogos completa
-    • IMAGENS PERSISTENTES (arquivo + bytea)
+    • ✅ IMAGENS PERSISTENTES HÍBRIDAS (arquivo + bytea)
   
   💡 Recuperação de imagens: /admin/restaurar-imagens
+  📁 SQL para criar tabela de backup no início deste arquivo
   
   ====================================================
   `);
