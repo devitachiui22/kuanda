@@ -1,4 +1,3 @@
-// server.js - VERSÃO COMPLETA PARA PRODUÇÃO
 const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
@@ -9,9 +8,8 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const db = require('./config/database');
 const expressLayouts = require('express-ejs-layouts');
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const sharp = require('sharp');
+const fs = require('fs');
+const { Pool } = require('pg');
 require('dotenv').config();
 
 const app = express();
@@ -20,300 +18,64 @@ const PORT = process.env.PORT || 3000;
 // ==================== CONFIGURAÇÃO DE DIRETÓRIOS ====================
 const uploadDirs = [
   'public/uploads',
-  'public/uploads/temp',
-  'public/uploads/backup',
-  'tmp/uploads',
-  'tmp/uploads/banners',
-  'tmp/uploads/produtos',
-  'tmp/uploads/perfil',
-  'tmp/uploads/categorias',
-  'tmp/uploads/jogos'
+  'public/uploads/banners',
+  'public/uploads/filmes',
+  'public/uploads/produtos',
+  'public/uploads/perfil'
 ];
 
 uploadDirs.forEach(dir => {
-  if (!fsSync.existsSync(dir)) {
-    fsSync.mkdirSync(dir, { recursive: true });
-  }
-});
-
-// ==================== SISTEMA DE PERSISTÊNCIA DE IMAGENS NO BANCO ====================
-const inicializarTabelaImagens = async () => {
-  try {
-    console.log('🔄 Inicializando sistema de imagens...');
-    
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS imagens (
-        id SERIAL PRIMARY KEY,
-        nome_arquivo VARCHAR(255) NOT NULL,
-        tipo VARCHAR(50) NOT NULL,
-        dados BYTEA NOT NULL,
-        entidade_tipo VARCHAR(50) NOT NULL,
-        entidade_id INTEGER,
-        usuario_id INTEGER,
-        tamanho INTEGER,
-        mime_type VARCHAR(100),
-        url VARCHAR(500),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    console.log('✅ Tabela imagens verificada/criada');
-    
-    // Criar índice para performance
-    try {
-      await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_imagens_entidade 
-        ON imagens(entidade_tipo, entidade_id)
-      `);
-      console.log('✅ Índice de imagens criado');
-    } catch (indexError) {
-      console.log('ℹ️ Índice já existe');
-    }
-    
-    // Criar índice para usuário
-    try {
-      await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_imagens_usuario 
-        ON imagens(usuario_id)
-      `);
-      console.log('✅ Índice de usuário criado');
-    } catch (indexError) {
-      console.log('ℹ️ Índice já existe');
-    }
-    
-  } catch (error) {
-    console.error('❌ Erro ao inicializar tabela de imagens:', error.message);
-  }
-};
-
-// Função para salvar imagem no banco
-const salvarImagemBanco = async (file, entidadeTipo, entidadeId = null, usuarioId = null) => {
-  try {
-    if (!file || !file.path) {
-      throw new Error('Arquivo inválido ou não encontrado');
-    }
-
-    // Verificar se arquivo existe
-    try {
-      await fs.access(file.path);
-    } catch {
-      throw new Error('Arquivo temporário não encontrado');
-    }
-
-    // Ler arquivo como buffer
-    let fileBuffer = await fs.readFile(file.path);
-    
-    if (!fileBuffer || fileBuffer.length === 0) {
-      throw new Error('Arquivo vazio ou corrompido');
-    }
-
-    // Otimizar imagem usando sharp (para imagens)
-    if (file.mimetype && file.mimetype.startsWith('image/')) {
-      try {
-        fileBuffer = await sharp(fileBuffer)
-          .resize({ 
-            width: 1920, 
-            height: 1080, 
-            fit: 'inside',
-            withoutEnlargement: true 
-          })
-          .jpeg({ quality: 85 })
-          .toBuffer();
-      } catch (sharpError) {
-        console.warn('⚠️ Não foi possível otimizar imagem:', sharpError.message);
-        // Continua com o buffer original
-      }
-    }
-
-    // Gerar nome de arquivo único
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname || 'imagem.jpg');
-    const nomeArquivo = `img-${uniqueSuffix}${ext}`;
-
-    // Inserir no banco de dados
-    const result = await db.query(`
-      INSERT INTO imagens (
-        nome_arquivo, 
-        tipo, 
-        dados, 
-        entidade_tipo, 
-        entidade_id, 
-        usuario_id,
-        tamanho,
-        mime_type,
-        created_at,
-        updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id, nome_arquivo
-    `, [
-      nomeArquivo,
-      file.mimetype || 'image/jpeg',
-      fileBuffer,
-      entidadeTipo,
-      entidadeId,
-      usuarioId,
-      fileBuffer.length,
-      file.mimetype || 'image/jpeg'
-    ]);
-
-    // Remover arquivo temporário
-    try {
-      await fs.unlink(file.path);
-    } catch (unlinkError) {
-      console.warn(`⚠️ Não foi possível remover arquivo temporário ${file.path}:`, unlinkError.message);
-    }
-    
-    return result.rows[0];
-  } catch (error) {
-    console.error('❌ ERRO AO SALVAR IMAGEM NO BANCO:', error.message);
-    
-    // Tentar remover arquivo temporário em caso de erro
-    if (file && file.path) {
-      try {
-        await fs.unlink(file.path).catch(() => {});
-      } catch {
-        // Ignorar erro de remoção
-      }
-    }
-    
-    throw error;
-  }
-};
-
-// Função para obter imagem do banco
-const obterImagemBanco = async (imagemId) => {
-  try {
-    if (!imagemId || isNaN(imagemId)) {
-      return null;
-    }
-    
-    const result = await db.query(`
-      SELECT dados, mime_type, nome_arquivo, tamanho, entidade_tipo, entidade_id
-      FROM imagens 
-      WHERE id = $1
-    `, [parseInt(imagemId)]);
-
-    if (result.rows.length === 0) {
-      return null;
-    }
-
-    return result.rows[0];
-  } catch (error) {
-    console.error('❌ ERRO AO OBTER IMAGEM DO BANCO:', error.message);
-    return null;
-  }
-};
-
-// Função para deletar imagem do banco
-const deletarImagemBanco = async (imagemId) => {
-  try {
-    if (!imagemId) return true;
-    
-    await db.query('DELETE FROM imagens WHERE id = $1', [imagemId]);
-    return true;
-  } catch (error) {
-    console.error('❌ ERRO AO DELETAR IMAGEM DO BANCO:', error.message);
-    return false;
-  }
-};
-
-// Função para deletar todas imagens de uma entidade
-const deletarImagensEntidade = async (entidadeTipo, entidadeId) => {
-  try {
-    await db.query(`
-      DELETE FROM imagens 
-      WHERE entidade_tipo = $1 AND entidade_id = $2
-    `, [entidadeTipo, entidadeId]);
-    return true;
-  } catch (error) {
-    console.error('❌ ERRO AO DELETAR IMAGENS DA ENTIDADE:', error.message);
-    return false;
-  }
-};
-
-// ==================== ROTA PARA SERVIR IMAGENS ====================
-app.get('/imagem/:id', async (req, res) => {
-  try {
-    const imagemId = req.params.id;
-    
-    if (!imagemId || isNaN(imagemId)) {
-      return res.status(404).send('ID de imagem inválido');
-    }
-
-    const imagem = await obterImagemBanco(imagemId);
-    
-    if (!imagem) {
-      return res.status(404).send('Imagem não encontrada');
-    }
-
-    // Configurar headers de cache
-    res.set({
-      'Content-Type': imagem.mime_type || 'image/jpeg',
-      'Content-Length': imagem.tamanho || 0,
-      'Cache-Control': 'public, max-age=31536000', // Cache por 1 ano
-      'ETag': `"${imagemId}-${Date.now()}"`,
-      'X-Content-Type-Options': 'nosniff'
-    });
-
-    // Enviar dados binários
-    res.send(imagem.dados);
-  } catch (error) {
-    console.error('❌ ERRO AO SERVIR IMAGEM:', error.message);
-    res.status(500).send('Erro interno ao carregar imagem');
-  }
-});
-
-// Rota alternativa para compatibilidade
-app.get('/api/imagem/:id', async (req, res) => {
-  try {
-    const imagemId = req.params.id;
-    const imagem = await obterImagemBanco(imagemId);
-    
-    if (!imagem) {
-      return res.status(404).json({ error: 'Imagem não encontrada' });
-    }
-
-    res.set({
-      'Content-Type': imagem.mime_type,
-      'Cache-Control': 'public, max-age=31536000'
-    });
-    
-    res.send(imagem.dados);
-  } catch (error) {
-    console.error('❌ Erro na API de imagem:', error.message);
-    res.status(500).json({ error: 'Erro ao carregar imagem' });
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`✅ Criado diretório: ${dir}`);
   }
 });
 
 // ==================== CONFIGURAÇÃO DO MULTER ====================
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    let uploadPath = 'tmp/uploads/';
+    let uploadPath = 'public/uploads/';
     
     if (file.fieldname === 'imagem' && req.originalUrl.includes('banners')) {
-      uploadPath = 'tmp/uploads/banners/';
+      uploadPath = 'public/uploads/banners/';
     } else if (file.fieldname === 'poster' || req.originalUrl.includes('filmes')) {
-      uploadPath = 'tmp/uploads/filmes/';
-    } else if (file.fieldname === 'foto_perfil') {
-      uploadPath = 'tmp/uploads/perfil/';
-    } else if (file.fieldname.includes('imagem') || file.fieldname === 'imagem_categoria') {
-      uploadPath = 'tmp/uploads/produtos/';
-    } else if (file.fieldname === 'capa' || req.originalUrl.includes('jogos')) {
-      uploadPath = 'tmp/uploads/jogos/';
+      uploadPath = 'public/uploads/filmes/';
+    } else if (file.fieldname === 'foto_perfil' || req.originalUrl.includes('perfil')) {
+      uploadPath = 'public/uploads/perfil/';
+    } else if (file.fieldname.includes('imagem')) {
+      uploadPath = 'public/uploads/produtos/';
+    }
+    if (file.fieldname === 'capa' || req.originalUrl.includes('jogos')) {
+      uploadPath = 'public/uploads/games/';
     }
     
-    if (!fsSync.existsSync(uploadPath)) {
-      fsSync.mkdirSync(uploadPath, { recursive: true });
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
     }
     
     cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-    const filename = 'temp-' + uniqueSuffix + ext;
+    const ext = path.extname(file.originalname).toLowerCase();
+    const filename = 'imagem-' + uniqueSuffix + ext;
+    cb(null, filename);
+  }
+});
+
+const perfilStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = 'public/uploads/perfil/';
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const userId = req.session.user ? req.session.user.id : 'temp';
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const filename = `perfil-${userId}-${uniqueSuffix}${ext}`;
     cb(null, filename);
   }
 });
@@ -332,14 +94,11 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({ 
   storage: storage,
   fileFilter: fileFilter,
-  limits: { 
-    fileSize: 10 * 1024 * 1024, // 10MB
-    files: 10
-  }
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 const uploadPerfil = multer({ 
-  storage: storage,
+  storage: perfilStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: fileFilter
 });
@@ -351,19 +110,18 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(methodOverride('_method'));
 
-// Configuração robusta de sessão
 app.use(session({
   store: new pgSession({
-    pool: db,
+    conString: process.env.DATABASE_URL,
     tableName: 'user_sessions',
     createTableIfMissing: true,
-    pruneSessionInterval: 60
+    ttl: 24 * 60 * 60 // 24 horas
   }),
-  secret: process.env.SESSION_SECRET || 'kuandashop-secure-secret-key-' + Date.now(),
+  secret: process.env.SESSION_SECRET || 'kuandashop-secret-key-2025',
   resave: false,
   saveUninitialized: false,
   cookie: { 
@@ -371,122 +129,66 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax'
-  },
-  name: 'kuanda.sid',
-  rolling: true
+  }
 }));
 
 app.use(flash());
+
 app.use(expressLayouts);
 app.set('layout', 'layout');
 
-// Middleware para timeout de requisições
 app.use((req, res, next) => {
-  res.setTimeout(30000, () => {
-    if (!res.headersSent) {
-      console.log(`⚠️ Timeout na requisição: ${req.method} ${req.url}`);
-      res.status(503).send('Servidor ocupado. Tente novamente.');
-    }
-  });
+  res.locals.user = req.session.user || null;
+  res.locals.messages = req.flash();
+  res.locals.currentUrl = req.originalUrl;
   next();
 });
 
-// Middleware global para variáveis de template
-app.use(async (req, res, next) => {
-  try {
-    // Configurar usuário atual
-    if (req.session && req.session.user) {
-      res.locals.user = {
-        id: req.session.user.id || 0,
-        nome: req.session.user.nome || '',
-        email: req.session.user.email || '',
-        tipo: req.session.user.tipo || 'cliente',
-        nome_loja: req.session.user.nome_loja || '',
-        loja_ativa: req.session.user.loja_ativa || false,
-        foto_perfil: req.session.user.foto_perfil || null,
-        telefone: req.session.user.telefone || '',
-        plano_id: req.session.user.plano_id || null,
-        limite_produtos: req.session.user.limite_produtos || 10
-      };
-    } else {
-      res.locals.user = null;
-    }
-    
-    // Garantir que messages sempre exista
-    res.locals.messages = req.flash() || {};
-    res.locals.currentUrl = req.originalUrl || '/';
-    
-    // Inicializar carrinho se não existir
-    if (!req.session.carrinho) {
-      req.session.carrinho = [];
-    }
-    res.locals.carrinho = req.session.carrinho || [];
-    
-    // Função auxiliar para obter URL da imagem
-    res.locals.getImageUrl = (imagemId) => {
-      if (!imagemId) return '/images/placeholder.png';
-      return `/imagem/${imagemId}`;
-    };
-    
-    // Função para obter URL de imagem do produto
-    res.locals.getProdutoImage = (produto, index = 1) => {
-      if (!produto) return '/images/placeholder-product.png';
-      
-      const imageId = index === 1 ? produto.imagem1_id : 
-                     (index === 2 ? produto.imagem2_id : 
-                     (index === 3 ? produto.imagem3_id : null));
-      
-      return imageId ? `/imagem/${imageId}` : '/images/placeholder-product.png';
-    };
-    
-    // Função para formatar preço
-    res.locals.formatPrice = (price) => {
-      if (!price && price !== 0) return 'R$ 0,00';
-      return 'R$ ' + parseFloat(price).toFixed(2).replace('.', ',');
-    };
-    
-    // Função para calcular desconto
-    res.locals.calculateDiscount = (original, promotional) => {
-      if (!promotional || !original) return 0;
-      const discount = ((original - promotional) / original) * 100;
-      return Math.round(discount);
-    };
-    
-    // Buscar configurações do site
-    try {
-      const config = await db.query('SELECT * FROM configuracoes LIMIT 1');
-      if (config.rows.length > 0) {
-        res.locals.siteConfig = config.rows[0];
-      } else {
-        res.locals.siteConfig = {
-          nome_site: 'KuandaShop',
-          email_contato: 'contato@kuandashop.ao',
-          telefone_contato: '+244 123 456 789'
-        };
-      }
-    } catch (configError) {
-      console.error('Erro ao carregar configurações:', configError.message);
-      res.locals.siteConfig = {
-        nome_site: 'KuandaShop',
-        email_contato: 'contato@kuandashop.ao',
-        telefone_contato: '+244 123 456 789'
-      };
-    }
-    
-    next();
-  } catch (error) {
-    console.error('❌ ERRO NO MIDDLEWARE GLOBAL:', error.message);
-    next();
+app.use((req, res, next) => {
+  if (!req.session.carrinho) {
+    req.session.carrinho = [];
   }
-});
-
-// Middleware de log para debug
-app.use((req, res, next) => {
-  console.log(`📝 ${req.method} ${req.originalUrl} - User: ${req.session.user?.id || 'guest'}`);
+  res.locals.carrinho = req.session.carrinho || [];
   next();
 });
 
-// ==================== FUNÇÕES AUXILIARES COMPLETAS ====================
+// ==================== FUNÇÕES AUXILIARES ====================
+const removeProfilePicture = (filename) => {
+  if (!filename) return;
+  try {
+    const filePath = path.join('public/uploads/perfil/', filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    console.error('Erro ao remover foto de perfil:', error);
+  }
+};
+
+const removeOldProfilePicture = async (userId, currentFilename) => {
+  try {
+    if (!currentFilename) return;
+    
+    const perfilDir = 'public/uploads/perfil/';
+    if (!fs.existsSync(perfilDir)) return;
+    
+    const files = fs.readdirSync(perfilDir);
+    const userFiles = files.filter(file => 
+      file.startsWith(`perfil-${userId}-`) && 
+      file !== currentFilename
+    );
+    
+    userFiles.forEach(file => {
+      const filePath = path.join(perfilDir, file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao remover fotos antigas:', error);
+  }
+};
+
 const validateProductData = (data) => {
   const errors = [];
   
@@ -508,36 +210,6 @@ const validateProductData = (data) => {
   
   if (!data.estoque || isNaN(data.estoque) || parseInt(data.estoque) < 0) {
     errors.push('Estoque deve ser um número não negativo');
-  }
-  
-  return errors;
-};
-
-const validateUserData = (data, isUpdate = false) => {
-  const errors = [];
-  
-  if (!isUpdate || data.nome !== undefined) {
-    if (!data.nome || data.nome.trim().length < 2) {
-      errors.push('Nome deve ter pelo menos 2 caracteres');
-    }
-  }
-  
-  if (!isUpdate || data.email !== undefined) {
-    if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-      errors.push('Email inválido');
-    }
-  }
-  
-  if (!isUpdate) {
-    if (!data.senha || data.senha.length < 6) {
-      errors.push('Senha deve ter pelo menos 6 caracteres');
-    }
-  }
-  
-  if (data.tipo === 'vendedor') {
-    if (!data.nome_loja || data.nome_loja.trim().length < 3) {
-      errors.push('Nome da loja deve ter pelo menos 3 caracteres');
-    }
   }
   
   return errors;
@@ -568,497 +240,74 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-// ==================== INICIALIZAÇÃO DO BANCO DE DADOS ====================
-const inicializarBancoDados = async () => {
-  console.log('🔄 INICIALIZANDO BANCO DE DADOS...');
-  
-  try {
-    // Verificar conexão
-    await db.query('SELECT 1');
-    console.log('✅ Conexão com banco de dados estabelecida');
-    
-    // Executar inicialização da tabela de imagens
-    await inicializarTabelaImagens();
-    
-    // Verificar e criar outras tabelas necessárias
-    const tables = [
-      'planos_vendedor',
-      'usuarios',
-      'produtos', 
-      'banners',
-      'filmes',
-      'categorias',
-      'avaliacoes',
-      'seguidores',
-      'solicitacoes_vip',
-      'jogos',
-      'configuracoes',
-      'vendas'
-    ];
-
-    for (const table of tables) {
-      try {
-        await db.query(`SELECT 1 FROM ${table} LIMIT 1`);
-        console.log(`✅ Tabela ${table} existe`);
-      } catch (error) {
-        console.log(`ℹ️ Tabela ${table} não existe: ${error.message}`);
-      }
-    }
-
-    // Criar tabela planos_vendedor se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS planos_vendedor (
-          id SERIAL PRIMARY KEY,
-          nome VARCHAR(100) NOT NULL,
-          limite_produtos INTEGER NOT NULL DEFAULT 10,
-          preco_mensal DECIMAL(10,2) DEFAULT 0.00,
-          permite_vip BOOLEAN DEFAULT false,
-          permite_destaque BOOLEAN DEFAULT false,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela planos_vendedor verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela planos_vendedor:', error.message);
-    }
-
-    // Criar tabela usuarios se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS usuarios (
-          id SERIAL PRIMARY KEY,
-          nome VARCHAR(100) NOT NULL,
-          email VARCHAR(100) UNIQUE NOT NULL,
-          senha VARCHAR(255) NOT NULL,
-          telefone VARCHAR(20),
-          tipo VARCHAR(20) DEFAULT 'cliente',
-          nome_loja VARCHAR(100),
-          descricao_loja TEXT,
-          foto_perfil_id INTEGER REFERENCES imagens(id),
-          plano_id INTEGER REFERENCES planos_vendedor(id),
-          limite_produtos INTEGER DEFAULT 10,
-          loja_ativa BOOLEAN DEFAULT false,
-          bloqueado BOOLEAN DEFAULT false,
-          email_verificado BOOLEAN DEFAULT false,
-          ultimo_login TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela usuarios verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela usuarios:', error.message);
-    }
-
-    // Criar tabela produtos se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS produtos (
-          id SERIAL PRIMARY KEY,
-          nome VARCHAR(200) NOT NULL,
-          descricao TEXT NOT NULL,
-          preco DECIMAL(10,2) NOT NULL,
-          preco_promocional DECIMAL(10,2),
-          categoria_id INTEGER,
-          estoque INTEGER DEFAULT 0,
-          imagem1_id INTEGER REFERENCES imagens(id),
-          imagem2_id INTEGER REFERENCES imagens(id),
-          imagem3_id INTEGER REFERENCES imagens(id),
-          vendedor_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-          destaque BOOLEAN DEFAULT false,
-          vip BOOLEAN DEFAULT false,
-          ativo BOOLEAN DEFAULT true,
-          views_count INTEGER DEFAULT 0,
-          vendas_count INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela produtos verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela produtos:', error.message);
-    }
-
-    // Criar tabela banners se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS banners (
-          id SERIAL PRIMARY KEY,
-          titulo VARCHAR(200),
-          imagem_id INTEGER REFERENCES imagens(id),
-          link VARCHAR(500),
-          ordem INTEGER DEFAULT 0,
-          ativo BOOLEAN DEFAULT true,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela banners verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela banners:', error.message);
-    }
-
-    // Criar tabela categorias se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS categorias (
-          id SERIAL PRIMARY KEY,
-          nome VARCHAR(100) NOT NULL,
-          descricao TEXT,
-          imagem_id INTEGER REFERENCES imagens(id),
-          ordem INTEGER DEFAULT 0,
-          ativo BOOLEAN DEFAULT true,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela categorias verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela categorias:', error.message);
-    }
-
-    // Criar tabela vendas se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS vendas (
-          id SERIAL PRIMARY KEY,
-          codigo VARCHAR(50) UNIQUE NOT NULL,
-          usuario_id INTEGER REFERENCES usuarios(id),
-          vendedor_id INTEGER REFERENCES usuarios(id),
-          produto_id INTEGER REFERENCES produtos(id),
-          quantidade INTEGER NOT NULL,
-          valor_unitario DECIMAL(10,2) NOT NULL,
-          valor_total DECIMAL(10,2) NOT NULL,
-          status VARCHAR(50) DEFAULT 'pendente',
-          metodo_pagamento VARCHAR(50),
-          endereco_entrega TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela vendas verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela vendas:', error.message);
-    }
-
-    // Criar tabela jogos se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS jogos (
-          id SERIAL PRIMARY KEY,
-          titulo VARCHAR(200) NOT NULL,
-          descricao TEXT,
-          preco DECIMAL(10,2) DEFAULT 0.00,
-          preco_promocional DECIMAL(10,2),
-          plataforma VARCHAR(50),
-          genero VARCHAR(100),
-          desenvolvedor VARCHAR(100),
-          capa_id INTEGER REFERENCES imagens(id),
-          banner_id INTEGER REFERENCES imagens(id),
-          link_download TEXT,
-          trailer_url TEXT,
-          requisitos TEXT,
-          classificacao VARCHAR(10),
-          ativo BOOLEAN DEFAULT true,
-          vendas_count INTEGER DEFAULT 0,
-          downloads_count INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela jogos verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela jogos:', error.message);
-    }
-
-    // Criar tabela filmes se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS filmes (
-          id SERIAL PRIMARY KEY,
-          titulo VARCHAR(200) NOT NULL,
-          sinopse TEXT,
-          ano_lancamento INTEGER,
-          duracao INTEGER,
-          classificacao VARCHAR(10),
-          diretor VARCHAR(100),
-          elenco TEXT,
-          trailer_url TEXT,
-          poster_id INTEGER REFERENCES imagens(id),
-          ativo BOOLEAN DEFAULT true,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela filmes verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela filmes:', error.message);
-    }
-
-    // Criar tabela avaliacoes se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS avaliacoes (
-          id SERIAL PRIMARY KEY,
-          produto_id INTEGER REFERENCES produtos(id) ON DELETE CASCADE,
-          usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-          classificacao INTEGER NOT NULL CHECK (classificacao >= 1 AND classificacao <= 5),
-          comentario TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(produto_id, usuario_id)
-        )
-      `);
-      console.log('✅ Tabela avaliacoes verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela avaliacoes:', error.message);
-    }
-
-    // Criar tabela seguidores se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS seguidores (
-          id SERIAL PRIMARY KEY,
-          usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-          loja_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(usuario_id, loja_id)
-        )
-      `);
-      console.log('✅ Tabela seguidores verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela seguidores:', error.message);
-    }
-
-    // Criar tabela solicitacoes_vip se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS solicitacoes_vip (
-          id SERIAL PRIMARY KEY,
-          produto_id INTEGER REFERENCES produtos(id) ON DELETE CASCADE,
-          vendedor_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-          tipo VARCHAR(50) NOT NULL,
-          status VARCHAR(50) DEFAULT 'pendente',
-          observacoes TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela solicitacoes_vip verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela solicitacoes_vip:', error.message);
-    }
-
-    // Criar tabela configuracoes se não existir
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS configuracoes (
-          id SERIAL PRIMARY KEY,
-          nome_site VARCHAR(200) DEFAULT 'KuandaShop',
-          email_contato VARCHAR(200),
-          telefone_contato VARCHAR(50),
-          endereco TEXT,
-          sobre_nos TEXT,
-          termos_uso TEXT,
-          politica_privacidade TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('✅ Tabela configuracoes verificada/criada');
-    } catch (error) {
-      console.error('❌ Erro ao criar tabela configuracoes:', error.message);
-    }
-
-    // Criar planos padrão se não existirem
-    try {
-      const planosExistentes = await db.query('SELECT COUNT(*) as total FROM planos_vendedor');
-      if (parseInt(planosExistentes.rows[0].total) === 0) {
-        await db.query(`
-          INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque) VALUES
-          ('Básico', 10, 0.00, false, false),
-          ('Pro', 50, 99.90, true, true),
-          ('Premium', 200, 299.90, true, true),
-          ('Enterprise', 1000, 999.90, true, true)
-        `);
-        console.log('✅ Planos padrão criados');
-      }
-    } catch (planoError) {
-      console.error('❌ Erro ao verificar/criar planos:', planoError.message);
-    }
-
-    // Criar configuração padrão se não existir
-    try {
-      const configExistentes = await db.query('SELECT COUNT(*) as total FROM configuracoes');
-      if (parseInt(configExistentes.rows[0].total) === 0) {
-        await db.query(`
-          INSERT INTO configuracoes (nome_site, email_contato, telefone_contato) 
-          VALUES ('KuandaShop', 'contato@kuandashop.ao', '+244 123 456 789')
-        `);
-        console.log('✅ Configuração padrão criada');
-      }
-    } catch (configError) {
-      console.error('❌ Erro ao verificar/criar configurações:', configError.message);
-    }
-
-    // Criar admin padrão se não existir
-    try {
-      const adminExistentes = await db.query("SELECT COUNT(*) as total FROM usuarios WHERE email = 'admin@kuandashop.ao'");
-      if (parseInt(adminExistentes.rows[0].total) === 0) {
-        const senhaHash = await bcrypt.hash('admin123', 12);
-        await db.query(`
-          INSERT INTO usuarios (nome, email, senha, tipo, loja_ativa, email_verificado) 
-          VALUES ('Administrador', 'admin@kuandashop.ao', $1, 'admin', true, true)
-        `, [senhaHash]);
-        console.log('✅ Admin padrão criado (email: admin@kuandashop.ao, senha: admin123)');
-      }
-    } catch (adminError) {
-      console.error('❌ Erro ao verificar/criar admin:', adminError.message);
-    }
-
-    console.log('✅ BANCO DE DADOS INICIALIZADO COM SUCESSO!');
-  } catch (error) {
-    console.error('❌ ERRO CRÍTICO AO INICIALIZAR BANCO DE DADOS:', error.message);
-    console.error('Stack trace:', error.stack);
-  }
-};
-
-// Executar inicialização
-inicializarBancoDados();
-
-// ==================== ROTAS PÚBLICAS COMPLETAS ====================
+// ==================== ROTAS PÚBLICAS ====================
 app.get('/', async (req, res) => {
   try {
-    console.log('📊 Carregando página inicial...');
-    
     const [
-      bannersResult,
-      produtosDestaqueResult,
-      produtosVipResult,
-      produtosOfertaResult,
-      filmesResult,
-      categoriasResult,
-      jogosPopularesResult
+      banners,
+      produtosDestaque,
+      produtosVip,
+      produtosOferta,
+      filmes,
+      categorias
     ] = await Promise.all([
+      db.query('SELECT * FROM banners WHERE ativo = true ORDER BY ordem'),
       db.query(`
-        SELECT b.*, i.id as imagem_id 
-        FROM banners b 
-        LEFT JOIN imagens i ON b.imagem_id = i.id 
-        WHERE b.ativo = true 
-        ORDER BY b.ordem, b.created_at DESC 
-        LIMIT 10
-      `),
-      db.query(`
-        SELECT p.*, u.nome_loja,
+        SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto, 
                COALESCE(AVG(a.classificacao), 0) as media_classificacao,
                COUNT(a.id) as total_avaliacoes
         FROM produtos p 
         JOIN usuarios u ON p.vendedor_id = u.id 
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
         WHERE p.ativo = true AND p.destaque = true AND u.loja_ativa = true
-        GROUP BY p.id, u.nome_loja
+        GROUP BY p.id, u.nome_loja, u.foto_perfil
         ORDER BY p.created_at DESC 
         LIMIT 12
       `),
       db.query(`
-        SELECT p.*, u.nome_loja,
+        SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto,
                COALESCE(AVG(a.classificacao), 0) as media_classificacao,
                COUNT(a.id) as total_avaliacoes
         FROM produtos p 
         JOIN usuarios u ON p.vendedor_id = u.id 
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
         WHERE p.ativo = true AND p.vip = true AND u.loja_ativa = true
-        GROUP BY p.id, u.nome_loja
+        GROUP BY p.id, u.nome_loja, u.foto_perfil
         ORDER BY p.created_at DESC 
         LIMIT 8
       `),
       db.query(`
-        SELECT p.*, u.nome_loja,
+        SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto,
                COALESCE(AVG(a.classificacao), 0) as media_classificacao,
                COUNT(a.id) as total_avaliacoes
         FROM produtos p 
         JOIN usuarios u ON p.vendedor_id = u.id 
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
         WHERE p.ativo = true AND p.preco_promocional IS NOT NULL AND u.loja_ativa = true
-        GROUP BY p.id, u.nome_loja
+        GROUP BY p.id, u.nome_loja, u.foto_perfil
         ORDER BY p.created_at DESC 
         LIMIT 10
       `),
-      db.query(`
-        SELECT f.*, i.id as imagem_id 
-        FROM filmes f 
-        LEFT JOIN imagens i ON f.poster_id = i.id 
-        WHERE f.ativo = true 
-        ORDER BY f.created_at DESC 
-        LIMIT 6
-      `),
-      db.query('SELECT * FROM categorias WHERE ativo = true ORDER BY nome LIMIT 12'),
-      db.query(`
-        SELECT j.*, i.id as imagem_id 
-        FROM jogos j 
-        LEFT JOIN imagens i ON j.capa_id = i.id 
-        WHERE j.ativo = true 
-        ORDER BY (j.vendas_count + j.downloads_count) DESC 
-        LIMIT 6
-      `)
+      db.query('SELECT * FROM filmes WHERE ativo = true ORDER BY data_lancamento DESC LIMIT 6'),
+      db.query('SELECT * FROM categorias ORDER BY nome')
     ]);
 
-    // Processar banners com URLs
-    const banners = bannersResult.rows.map(banner => ({
+    const bannersCorrigidos = banners.rows.map(banner => ({
       ...banner,
-      imagem_url: banner.imagem_id ? `/imagem/${banner.imagem_id}` : '/images/banner-placeholder.jpg'
+      imagem: `/uploads/banners/${banner.imagem}`
     }));
-
-    // Processar produtos com URLs
-    const processarProdutos = (produtos) => produtos.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      imagem2_url: produto.imagem2_id ? `/imagem/${produto.imagem2_id}` : null,
-      imagem3_url: produto.imagem3_id ? `/imagem/${produto.imagem3_id}` : null,
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null,
-      estoque: parseInt(produto.estoque) || 0,
-      media_classificacao: parseFloat(produto.media_classificacao) || 0,
-      total_avaliacoes: parseInt(produto.total_avaliacoes) || 0
-    }));
-
-    // Processar filmes com URLs
-    const filmes = filmesResult.rows.map(filme => ({
-      ...filme,
-      imagem_url: filme.imagem_id ? `/imagem/${filme.imagem_id}` : '/images/movie-placeholder.jpg'
-    }));
-
-    // Processar jogos com URLs
-    const jogosPopulares = jogosPopularesResult.rows.map(jogo => ({
-      ...jogo,
-      capa_url: jogo.imagem_id ? `/imagem/${jogo.imagem_id}` : '/images/game-placeholder.jpg'
-    }));
-
-    console.log(`✅ Página inicial carregada:`);
-    console.log(`   🖼️ Banners: ${banners.length}`);
-    console.log(`   ⭐ Produtos destaque: ${produtosDestaqueResult.rows.length}`);
-    console.log(`   👑 Produtos VIP: ${produtosVipResult.rows.length}`);
-    console.log(`   🏷️ Produtos oferta: ${produtosOfertaResult.rows.length}`);
-    console.log(`   🎬 Filmes: ${filmes.length}`);
-    console.log(`   📂 Categorias: ${categoriasResult.rows.length}`);
-    console.log(`   🎮 Jogos populares: ${jogosPopulares.length}`);
 
     res.render('index', {
-      banners,
-      produtosDestaque: processarProdutos(produtosDestaqueResult.rows),
-      produtosVip: processarProdutos(produtosVipResult.rows),
-      produtosOferta: processarProdutos(produtosOfertaResult.rows),
-      filmes,
-      categorias: categoriasResult.rows,
-      jogosPopulares,
+      banners: bannersCorrigidos,
+      produtosDestaque: produtosDestaque.rows,
+      produtosVip: produtosVip.rows,
+      produtosOferta: produtosOferta.rows,
+      filmes: filmes.rows,
+      categorias: categorias.rows,
       title: 'KuandaShop - Marketplace Multi-Vendor'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR PÁGINA INICIAL:', error.message);
-    
-    // Fallback seguro
+    console.error('Erro ao carregar página inicial:', error);
     res.render('index', {
       banners: [],
       produtosDestaque: [],
@@ -1066,23 +315,90 @@ app.get('/', async (req, res) => {
       produtosOferta: [],
       filmes: [],
       categorias: [],
-      jogosPopulares: [],
       title: 'KuandaShop - Marketplace'
     });
   }
 });
 
-// ==================== ROTA DE PRODUTOS COMPLETA ====================
 app.get('/produtos', async (req, res) => {
-  const { categoria, busca, ordenar, pagina = 1 } = req.query;
-  const itensPorPagina = 12;
-  const offset = (pagina - 1) * itensPorPagina;
+  const { categoria, busca, ordenar } = req.query;
+  let query = `
+    SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto,
+           COALESCE(AVG(a.classificacao), 0) as media_classificacao,
+           COUNT(a.id) as total_avaliacoes,
+           c.nome as categoria_nome
+    FROM produtos p 
+    JOIN usuarios u ON p.vendedor_id = u.id 
+    LEFT JOIN avaliacoes a ON p.id = a.produto_id
+    LEFT JOIN categorias c ON p.categoria_id = c.id
+    WHERE p.ativo = true AND u.loja_ativa = true
+  `;
   
+  const params = [];
+  let paramCount = 0;
+
+  if (categoria) {
+    paramCount++;
+    query += ` AND p.categoria_id = $${paramCount}`;
+    params.push(categoria);
+  }
+
+  if (busca) {
+    paramCount++;
+    query += ` AND (p.nome ILIKE $${paramCount} OR p.descricao ILIKE $${paramCount} OR u.nome_loja ILIKE $${paramCount})`;
+    params.push(`%${busca}%`);
+  }
+
+  query += ' GROUP BY p.id, u.nome_loja, u.foto_perfil, c.nome';
+
+  switch (ordenar) {
+    case 'preco_asc':
+      query += ' ORDER BY p.preco ASC';
+      break;
+    case 'preco_desc':
+      query += ' ORDER BY p.preco DESC';
+      break;
+    case 'nome':
+      query += ' ORDER BY p.nome ASC';
+      break;
+    case 'avaliacao':
+      query += ' ORDER BY media_classificacao DESC';
+      break;
+    case 'novos':
+      query += ' ORDER BY p.created_at DESC';
+      break;
+    default:
+      query += ' ORDER BY p.created_at DESC';
+  }
+
   try {
-    console.log(`📦 Carregando produtos - Categoria: ${categoria || 'Todas'}, Busca: ${busca || 'Nenhuma'}, Ordenar: ${ordenar || 'padrão'}, Página: ${pagina}`);
-    
-    let query = `
-      SELECT p.*, u.nome_loja, u.foto_perfil_id as loja_foto_id,
+    const [produtos, categoriasList] = await Promise.all([
+      db.query(query, params),
+      db.query('SELECT * FROM categorias ORDER BY nome')
+    ]);
+
+    res.render('produtos/lista', {
+      produtos: produtos.rows,
+      categorias: categoriasList.rows,
+      filtros: { categoria, busca, ordenar },
+      title: 'Produtos - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar produtos:', error);
+    res.render('produtos/lista', {
+      produtos: [],
+      categorias: [],
+      filtros: { categoria, busca, ordenar },
+      title: 'Produtos'
+    });
+  }
+});
+
+app.get('/produto/:id', async (req, res) => {
+  try {
+    const produto = await db.query(`
+      SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto, u.telefone as loja_telefone,
+             u.descricao_loja, u.created_at as loja_desde,
              COALESCE(AVG(a.classificacao), 0) as media_classificacao,
              COUNT(a.id) as total_avaliacoes,
              c.nome as categoria_nome
@@ -1090,382 +406,310 @@ app.get('/produtos', async (req, res) => {
       JOIN usuarios u ON p.vendedor_id = u.id 
       LEFT JOIN avaliacoes a ON p.id = a.produto_id
       LEFT JOIN categorias c ON p.categoria_id = c.id
-      WHERE p.ativo = true AND u.loja_ativa = true
-    `;
-    
-    let countQuery = `
-      SELECT COUNT(DISTINCT p.id) as total
-      FROM produtos p 
-      JOIN usuarios u ON p.vendedor_id = u.id 
-      LEFT JOIN categorias c ON p.categoria_id = c.id
-      WHERE p.ativo = true AND u.loja_ativa = true
-    `;
-    
-    const params = [];
-    const countParams = [];
-    let paramCount = 0;
-    let countParamCount = 0;
-
-    if (categoria && categoria !== 'todas') {
-      paramCount++;
-      query += ` AND p.categoria_id = $${paramCount}`;
-      params.push(categoria);
-      
-      countParamCount++;
-      countQuery += ` AND p.categoria_id = $${countParamCount}`;
-      countParams.push(categoria);
-    }
-
-    if (busca) {
-      paramCount++;
-      query += ` AND (
-        p.nome ILIKE $${paramCount} OR 
-        p.descricao ILIKE $${paramCount} OR 
-        u.nome_loja ILIKE $${paramCount} OR
-        c.nome ILIKE $${paramCount}
-      )`;
-      params.push(`%${busca}%`);
-      
-      countParamCount++;
-      countQuery += ` AND (
-        p.nome ILIKE $${countParamCount} OR 
-        p.descricao ILIKE $${countParamCount} OR 
-        u.nome_loja ILIKE $${countParamCount} OR
-        c.nome ILIKE $${countParamCount}
-      )`;
-      countParams.push(`%${busca}%`);
-    }
-
-    query += ' GROUP BY p.id, u.nome_loja, u.foto_perfil_id, c.nome';
-
-    // Ordenação
-    switch (ordenar) {
-      case 'preco_asc':
-        query += ' ORDER BY COALESCE(p.preco_promocional, p.preco) ASC';
-        break;
-      case 'preco_desc':
-        query += ' ORDER BY COALESCE(p.preco_promocional, p.preco) DESC';
-        break;
-      case 'nome':
-        query += ' ORDER BY p.nome ASC';
-        break;
-      case 'avaliacao':
-        query += ' ORDER BY media_classificacao DESC NULLS LAST, p.created_at DESC';
-        break;
-      case 'novos':
-        query += ' ORDER BY p.created_at DESC';
-        break;
-      case 'vendidos':
-        query += ' ORDER BY p.vendas_count DESC NULLS LAST';
-        break;
-      default:
-        query += ' ORDER BY p.created_at DESC';
-    }
-
-    // Paginação
-    paramCount++;
-    query += ` LIMIT $${paramCount}`;
-    params.push(itensPorPagina);
-    
-    paramCount++;
-    query += ` OFFSET $${paramCount}`;
-    params.push(offset);
-
-    // Executar queries em paralelo
-    const [produtosResult, countResult, categoriasList] = await Promise.all([
-      db.query(query, params),
-      db.query(countQuery, countParams),
-      db.query('SELECT * FROM categorias WHERE ativo = true ORDER BY nome')
-    ]);
-
-    const totalProdutos = parseInt(countResult.rows[0].total) || 0;
-    const totalPaginas = Math.ceil(totalProdutos / itensPorPagina);
-
-    // Processar produtos com imagens
-    const produtos = produtosResult.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      imagem2_url: produto.imagem2_id ? `/imagem/${produto.imagem2_id}` : null,
-      imagem3_url: produto.imagem3_id ? `/imagem/${produto.imagem3_id}` : null,
-      loja_foto_url: produto.loja_foto_id ? `/imagem/${produto.loja_foto_id}` : '/images/default-avatar.png',
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null,
-      estoque: parseInt(produto.estoque) || 0,
-      media_classificacao: parseFloat(produto.media_classificacao) || 0,
-      total_avaliacoes: parseInt(produto.total_avaliacoes) || 0
-    }));
-
-    console.log(`✅ ${produtos.length} produtos carregados (Total: ${totalProdutos}, Páginas: ${totalPaginas})`);
-
-    res.render('produtos/lista', {
-      produtos,
-      categorias: categoriasList.rows,
-      filtros: { 
-        categoria: categoria || 'todas', 
-        busca: busca || '', 
-        ordenar: ordenar || 'novos',
-        pagina: parseInt(pagina) || 1
-      },
-      paginacao: {
-        paginaAtual: parseInt(pagina) || 1,
-        totalPaginas,
-        totalProdutos,
-        itensPorPagina,
-        hasPrev: pagina > 1,
-        hasNext: pagina < totalPaginas
-      },
-      title: 'Produtos - KuandaShop'
-    });
-  } catch (error) {
-    console.error('❌ ERRO AO CARREGAR PRODUTOS:', error.message);
-    
-    res.render('produtos/lista', {
-      produtos: [],
-      categorias: [],
-      filtros: { categoria: categoria || 'todas', busca: busca || '', ordenar: ordenar || 'novos', pagina: 1 },
-      paginacao: {
-        paginaAtual: 1,
-        totalPaginas: 0,
-        totalProdutos: 0,
-        itensPorPagina: 12,
-        hasPrev: false,
-        hasNext: false
-      },
-      title: 'Produtos - KuandaShop'
-    });
-  }
-});
-
-// ==================== ROTA DE DETALHES DO PRODUTO COMPLETA ====================
-app.get('/produto/:id', async (req, res) => {
-  try {
-    const produtoId = req.params.id;
-    console.log(`🔍 Carregando detalhes do produto ${produtoId}...`);
-    
-    const produtoResult = await db.query(`
-      SELECT p.*, 
-             u.nome_loja, u.foto_perfil_id as loja_foto_id, u.telefone as loja_telefone,
-             u.descricao_loja, u.created_at as loja_desde,
-             c.nome as categoria_nome,
-             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-             COUNT(a.id) as total_avaliacoes
-      FROM produtos p 
-      LEFT JOIN usuarios u ON p.vendedor_id = u.id 
-      LEFT JOIN categorias c ON p.categoria_id = c.id
-      LEFT JOIN avaliacoes a ON p.id = a.produto_id
       WHERE p.id = $1 AND p.ativo = true
-      GROUP BY p.id, u.nome_loja, u.foto_perfil_id, u.telefone, u.descricao_loja, u.created_at, c.nome
-    `, [produtoId]);
-    
-    if (produtoResult.rows.length === 0) {
-      console.log(`❌ Produto ${produtoId} não encontrado`);
-      req.flash('error', 'Produto não encontrado ou indisponível');
+      GROUP BY p.id, u.nome_loja, u.foto_perfil, u.telefone, u.descricao_loja, u.created_at, c.nome
+    `, [req.params.id]);
+
+    if (produto.rows.length === 0) {
+      req.flash('error', 'Produto não encontrado');
       return res.redirect('/produtos');
     }
 
-    const produtoData = produtoResult.rows[0];
-    
-    // Processar dados numéricos
+    const produtoData = produto.rows[0];
     produtoData.media_classificacao = parseFloat(produtoData.media_classificacao) || 0;
     produtoData.total_avaliacoes = parseInt(produtoData.total_avaliacoes) || 0;
     produtoData.preco = parseFloat(produtoData.preco) || 0;
     produtoData.preco_promocional = produtoData.preco_promocional ? parseFloat(produtoData.preco_promocional) : null;
     produtoData.estoque = parseInt(produtoData.estoque) || 0;
-    
-    // Adicionar URLs das imagens
-    produtoData.imagem1_url = produtoData.imagem1_id ? `/imagem/${produtoData.imagem1_id}` : '/images/placeholder-product.png';
-    produtoData.imagem2_url = produtoData.imagem2_id ? `/imagem/${produtoData.imagem2_id}` : null;
-    produtoData.imagem3_url = produtoData.imagem3_id ? `/imagem/${produtoData.imagem3_id}` : null;
-    produtoData.loja_foto_url = produtoData.loja_foto_id ? `/imagem/${produtoData.loja_foto_id}` : '/images/default-avatar.png';
 
-    console.log(`✅ Produto "${produtoData.nome}" carregado`);
-
-    const [produtosSimilaresResult, avaliacoesResult, statsVendedorResult] = await Promise.all([
+    const [produtosSimilares, avaliacoes] = await Promise.all([
       db.query(`
-        SELECT p.*, u.nome_loja,
+        SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto,
                COALESCE(AVG(a.classificacao), 0) as media_classificacao,
                COUNT(a.id) as total_avaliacoes
         FROM produtos p 
         JOIN usuarios u ON p.vendedor_id = u.id 
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
-        WHERE p.categoria_id = $1 
-          AND p.id != $2 
-          AND p.ativo = true 
-          AND u.loja_ativa = true
-        GROUP BY p.id, u.nome_loja
+        WHERE p.categoria_id = $1 AND p.id != $2 AND p.ativo = true AND u.loja_ativa = true
+        GROUP BY p.id, u.nome_loja, u.foto_perfil
         ORDER BY RANDOM()
         LIMIT 6
-      `, [produtoData.categoria_id, produtoId]),
+      `, [produtoData.categoria_id, req.params.id]),
       db.query(`
-        SELECT a.*, u.nome, u.foto_perfil_id,
-               EXTRACT(DAY FROM CURRENT_TIMESTAMP - a.created_at) as dias_atras
+        SELECT a.*, u.nome, u.foto_perfil
         FROM avaliacoes a
         JOIN usuarios u ON a.usuario_id = u.id
         WHERE a.produto_id = $1
         ORDER BY a.created_at DESC
-        LIMIT 20
-      `, [produtoId]),
-      db.query(`
-        SELECT 
-          COUNT(p.id) as total_produtos,
-          COUNT(DISTINCT s.id) as total_seguidores,
-          COALESCE(AVG(a.classificacao), 0) as media_avaliacao_vendedor,
-          COUNT(DISTINCT a.id) as total_avaliacoes_vendedor
-        FROM usuarios u
-        LEFT JOIN produtos p ON u.id = p.vendedor_id AND p.ativo = true
-        LEFT JOIN seguidores s ON u.id = s.loja_id
-        LEFT JOIN avaliacoes a ON p.id = a.produto_id
-        WHERE u.id = $1
-        GROUP BY u.id
-      `, [produtoData.vendedor_id])
+        LIMIT 10
+      `, [req.params.id])
     ]);
-
-    // Processar produtos similares
-    const produtosSimilares = produtosSimilaresResult.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null
-    }));
-
-    // Processar avaliações
-    const avaliacoes = avaliacoesResult.rows.map(avaliacao => ({
-      ...avaliacao,
-      foto_perfil_url: avaliacao.foto_perfil_id ? `/imagem/${avaliacao.foto_perfil_id}` : '/images/default-avatar.png',
-      dias_atras: parseInt(avaliacao.dias_atras) || 0
-    }));
-
-    // Processar estatísticas do vendedor
-    let statsVendedor = null;
-    if (statsVendedorResult.rows.length > 0) {
-      statsVendedor = {
-        total_produtos: parseInt(statsVendedorResult.rows[0].total_produtos) || 0,
-        total_seguidores: parseInt(statsVendedorResult.rows[0].total_seguidores) || 0,
-        media_avaliacao: parseFloat(statsVendedorResult.rows[0].media_avaliacao_vendedor) || 0,
-        total_avaliacoes: parseInt(statsVendedorResult.rows[0].total_avaliacoes_vendedor) || 0
-      };
-    }
-
-    // Verificar se usuário segue a loja
-    let seguindo = false;
-    if (req.session.user) {
-      const segueResult = await db.query(
-        'SELECT id FROM seguidores WHERE usuario_id = $1 AND loja_id = $2 LIMIT 1',
-        [req.session.user.id, produtoData.vendedor_id]
-      );
-      seguindo = segueResult.rows.length > 0;
-    }
 
     res.render('produtos/detalhes', {
       produto: produtoData,
-      produtosSimilares,
-      avaliacoes,
-      statsVendedor,
-      seguindo,
+      produtosSimilares: produtosSimilares.rows,
+      avaliacoes: avaliacoes.rows,
       title: `${produtoData.nome} - KuandaShop`
     });
-    
-    console.log(`✅ Página de detalhes do produto ${produtoId} renderizada com sucesso!`);
   } catch (error) {
-    console.error('❌ ERRO CRÍTICO AO CARREGAR DETALHES DO PRODUTO:', error.message);
-    req.flash('error', 'Erro ao carregar produto. Tente novamente.');
+    console.error('Erro ao carregar produto:', error);
+    req.flash('error', 'Erro ao carregar produto');
     res.redirect('/produtos');
   }
 });
 
-// ==================== AVALIAÇÃO DE PRODUTO ====================
 app.post('/produto/:id/avaliar', requireAuth, async (req, res) => {
+  const { classificacao, comentario } = req.body;
+  
   try {
-    const produtoId = req.params.id;
-    const usuarioId = req.session.user.id;
-    const { classificacao, comentario } = req.body;
-    
-    console.log(`⭐ Avaliando produto ${produtoId} por usuário ${usuarioId}`);
-    
-    // Validar classificação
     const classificacaoNum = parseInt(classificacao);
-    if (isNaN(classificacaoNum) || classificacaoNum < 1 || classificacaoNum > 5) {
-      req.flash('error', 'Classificação deve ser entre 1 e 5 estrelas');
-      return res.redirect(`/produto/${produtoId}`);
+    if (classificacaoNum < 1 || classificacaoNum > 5) {
+      req.flash('error', 'Classificação deve ser entre 1 e 5');
+      return res.redirect(`/produto/${req.params.id}`);
     }
     
-    // Verificar se produto existe e está ativo
-    const produto = await db.query(
-      'SELECT id, vendedor_id FROM produtos WHERE id = $1 AND ativo = true',
-      [produtoId]
-    );
-    
-    if (produto.rows.length === 0) {
-      req.flash('error', 'Produto não encontrado ou indisponível');
-      return res.redirect('/produtos');
-    }
-    
-    // Verificar se usuário já avaliou este produto
     const avaliacaoExistente = await db.query(
       'SELECT id FROM avaliacoes WHERE produto_id = $1 AND usuario_id = $2',
-      [produtoId, usuarioId]
+      [req.params.id, req.session.user.id]
     );
 
     if (avaliacaoExistente.rows.length > 0) {
-      // Atualizar avaliação existente
       await db.query(`
         UPDATE avaliacoes 
         SET classificacao = $1, comentario = $2, updated_at = CURRENT_TIMESTAMP
         WHERE produto_id = $3 AND usuario_id = $4
-      `, [classificacaoNum, comentario ? comentario.trim() : null, produtoId, usuarioId]);
-      
+      `, [classificacaoNum, comentario, req.params.id, req.session.user.id]);
       req.flash('success', 'Avaliação atualizada com sucesso!');
-      console.log(`✅ Avaliação atualizada para produto ${produtoId}`);
     } else {
-      // Criar nova avaliação
       await db.query(`
         INSERT INTO avaliacoes (produto_id, usuario_id, classificacao, comentario)
         VALUES ($1, $2, $3, $4)
-      `, [produtoId, usuarioId, classificacaoNum, comentario ? comentario.trim() : null]);
-      
+      `, [req.params.id, req.session.user.id, classificacaoNum, comentario]);
       req.flash('success', 'Avaliação enviada com sucesso!');
-      console.log(`✅ Nova avaliação criada para produto ${produtoId}`);
     }
 
-    res.redirect(`/produto/${produtoId}`);
+    res.redirect(`/produto/${req.params.id}`);
   } catch (error) {
-    console.error('❌ ERRO AO AVALIAR PRODUTO:', error.message);
-    req.flash('error', 'Erro ao enviar avaliação. Tente novamente.');
+    console.error('Erro ao enviar avaliação:', error);
+    req.flash('error', 'Erro ao enviar avaliação');
     res.redirect(`/produto/${req.params.id}`);
   }
 });
 
-// ==================== ROTAS DE AUTENTICAÇÃO COMPLETAS ====================
+app.post('/avaliacao/:id/remover', requireAuth, async (req, res) => {
+  try {
+    const avaliacao = await db.query('SELECT * FROM avaliacoes WHERE id = $1', [req.params.id]);
+    
+    if (avaliacao.rows.length === 0) {
+      req.flash('error', 'Avaliação não encontrada');
+      return res.redirect('back');
+    }
+
+    if (avaliacao.rows[0].usuario_id !== req.session.user.id && req.session.user.tipo !== 'admin') {
+      req.flash('error', 'Você não tem permissão para remover esta avaliação');
+      return res.redirect('back');
+    }
+
+    await db.query('DELETE FROM avaliacoes WHERE id = $1', [req.params.id]);
+    
+    req.flash('success', 'Avaliação removida com sucesso!');
+    res.redirect('back');
+  } catch (error) {
+    console.error('Erro ao remover avaliação:', error);
+    req.flash('error', 'Erro ao remover avaliação');
+    res.redirect('back');
+  }
+});
+
+app.get('/lojas', async (req, res) => {
+  try {
+    const lojas = await db.query(`
+      SELECT u.*, 
+             COUNT(p.id) as total_produtos,
+             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
+             COUNT(DISTINCT a.id) as total_avaliacoes,
+             COUNT(DISTINCT s.id) as total_seguidores
+      FROM usuarios u
+      LEFT JOIN produtos p ON u.id = p.vendedor_id AND p.ativo = true
+      LEFT JOIN avaliacoes a ON p.id = a.produto_id
+      LEFT JOIN seguidores s ON u.id = s.loja_id
+      WHERE u.tipo = 'vendedor' AND u.loja_ativa = true
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `);
+
+    res.render('lojas/lista', {
+      lojas: lojas.rows,
+      title: 'Lojas - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar lojas:', error);
+    res.render('lojas/lista', { 
+      lojas: [],
+      title: 'Lojas'
+    });
+  }
+});
+
+app.get('/loja/:id', async (req, res) => {
+  const { categoria, busca, ordenar } = req.query;
+  
+  try {
+    const loja = await db.query(`
+      SELECT u.*, 
+             COUNT(DISTINCT p.id) as total_produtos,
+             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
+             COUNT(DISTINCT a.id) as total_avaliacoes,
+             COUNT(DISTINCT s.id) as total_seguidores
+      FROM usuarios u
+      LEFT JOIN produtos p ON u.id = p.vendedor_id AND p.ativo = true
+      LEFT JOIN avaliacoes a ON p.id = a.produto_id
+      LEFT JOIN seguidores s ON u.id = s.loja_id
+      WHERE u.id = $1 AND u.tipo = 'vendedor' AND u.loja_ativa = true
+      GROUP BY u.id
+    `, [req.params.id]);
+
+    if (loja.rows.length === 0) {
+      req.flash('error', 'Loja não encontrada');
+      return res.redirect('/lojas');
+    }
+
+    let produtosQuery = `
+      SELECT p.*, 
+             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
+             COUNT(a.id) as total_avaliacoes,
+             c.nome as categoria_nome
+      FROM produtos p 
+      LEFT JOIN avaliacoes a ON p.id = a.produto_id
+      LEFT JOIN categorias c ON p.categoria_id = c.id
+      WHERE p.vendedor_id = $1 AND p.ativo = true
+    `;
+    
+    const params = [req.params.id];
+    let paramCount = 1;
+
+    if (categoria) {
+      paramCount++;
+      produtosQuery += ` AND p.categoria_id = $${paramCount}`;
+      params.push(categoria);
+    }
+
+    if (busca) {
+      paramCount++;
+      produtosQuery += ` AND (p.nome ILIKE $${paramCount} OR p.descricao ILIKE $${paramCount})`;
+      params.push(`%${busca}%`);
+    }
+
+    produtosQuery += ' GROUP BY p.id, c.nome';
+
+    switch (ordenar) {
+      case 'preco_asc':
+        produtosQuery += ' ORDER BY p.preco ASC';
+        break;
+      case 'preco_desc':
+        produtosQuery += ' ORDER BY p.preco DESC';
+        break;
+      case 'nome':
+        produtosQuery += ' ORDER BY p.nome ASC';
+        break;
+      default:
+        produtosQuery += ' ORDER BY p.created_at DESC';
+    }
+
+    const [produtos, categoriasList] = await Promise.all([
+      db.query(produtosQuery, params),
+      db.query(`
+        SELECT DISTINCT c.* 
+        FROM categorias c
+        JOIN produtos p ON c.id = p.categoria_id
+        WHERE p.vendedor_id = $1 AND p.ativo = true
+        ORDER BY c.nome
+      `, [req.params.id])
+    ]);
+
+    let seguindo = false;
+    if (req.session.user) {
+      const segueResult = await db.query(
+        'SELECT id FROM seguidores WHERE usuario_id = $1 AND loja_id = $2',
+        [req.session.user.id, req.params.id]
+      );
+      seguindo = segueResult.rows.length > 0;
+    }
+
+    res.render('lojas/detalhes', {
+      loja: loja.rows[0],
+      produtos: produtos.rows,
+      categorias: categoriasList.rows,
+      filtros: { categoria, busca, ordenar },
+      seguindo,
+      title: `${loja.rows[0].nome_loja || loja.rows[0].nome} - Loja`
+    });
+  } catch (error) {
+    console.error('Erro ao carregar loja:', error);
+    req.flash('error', 'Erro ao carregar loja');
+    res.redirect('/lojas');
+  }
+});
+
+app.post('/loja/:id/seguir', requireAuth, async (req, res) => {
+  try {
+    const loja = await db.query(
+      'SELECT id FROM usuarios WHERE id = $1 AND tipo = $2 AND loja_ativa = true',
+      [req.params.id, 'vendedor']
+    );
+    
+    if (loja.rows.length === 0) {
+      req.flash('error', 'Loja não encontrada ou inativa');
+      return res.redirect('back');
+    }
+    
+    if (req.session.user.id === parseInt(req.params.id)) {
+      req.flash('error', 'Você não pode seguir sua própria loja');
+      return res.redirect('back');
+    }
+    
+    const jaSegue = await db.query(
+      'SELECT id FROM seguidores WHERE usuario_id = $1 AND loja_id = $2',
+      [req.session.user.id, req.params.id]
+    );
+
+    if (jaSegue.rows.length > 0) {
+      await db.query(
+        'DELETE FROM seguidores WHERE usuario_id = $1 AND loja_id = $2',
+        [req.session.user.id, req.params.id]
+      );
+      req.flash('success', 'Você deixou de seguir esta loja');
+    } else {
+      await db.query(
+        'INSERT INTO seguidores (usuario_id, loja_id) VALUES ($1, $2)',
+        [req.session.user.id, req.params.id]
+      );
+      req.flash('success', 'Você agora segue esta loja');
+    }
+
+    res.redirect(`/loja/${req.params.id}`);
+  } catch (error) {
+    console.error('Erro ao seguir/deixar de seguir loja:', error);
+    req.flash('error', 'Erro ao processar solicitação');
+    res.redirect(`/loja/${req.params.id}`);
+  }
+});
+
+// ==================== ROTAS DE AUTENTICAÇÃO ====================
 app.get('/login', (req, res) => {
   if (req.session.user) {
     return res.redirect('/');
   }
-  res.render('auth/login', { 
-    title: 'Login - KuandaShop'
-  });
+  res.render('auth/login', { title: 'Login - KuandaShop' });
 });
 
 app.post('/login', async (req, res) => {
   const { email, senha } = req.body;
   
   try {
-    console.log(`🔐 Tentativa de login com email: ${email}`);
-    
-    if (!email || !senha) {
-      req.flash('error', 'Email e senha são obrigatórios');
-      return res.redirect('/login');
-    }
-
-    const result = await db.query(`
-      SELECT u.*, pv.nome as plano_nome, pv.limite_produtos as plano_limite,
-             pv.permite_vip, pv.permite_destaque
-      FROM usuarios u 
-      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
-      WHERE u.email = $1
-    `, [email.toLowerCase().trim()]);
+    const result = await db.query('SELECT * FROM usuarios WHERE email = $1', [email]);
     
     if (result.rows.length === 0) {
-      console.log(`❌ Email não encontrado: ${email}`);
       req.flash('error', 'Email ou senha incorretos');
       return res.redirect('/login');
     }
@@ -1474,7 +718,6 @@ app.post('/login', async (req, res) => {
     const senhaValida = await bcrypt.compare(senha, user.senha);
 
     if (!senhaValida) {
-      console.log(`❌ Senha incorreta para email: ${email}`);
       req.flash('error', 'Email ou senha incorretos');
       return res.redirect('/login');
     }
@@ -1484,12 +727,6 @@ app.post('/login', async (req, res) => {
       return res.redirect('/login');
     }
 
-    if (user.bloqueado) {
-      req.flash('error', 'Sua conta está bloqueada. Entre em contato com o administrador.');
-      return res.redirect('/login');
-    }
-
-    // Configurar sessão do usuário
     req.session.user = {
       id: user.id,
       nome: user.nome,
@@ -1497,27 +734,14 @@ app.post('/login', async (req, res) => {
       tipo: user.tipo,
       nome_loja: user.nome_loja,
       loja_ativa: user.loja_ativa,
-      foto_perfil: user.foto_perfil_id ? `/imagem/${user.foto_perfil_id}` : null,
+      foto_perfil: user.foto_perfil,
       telefone: user.telefone,
       plano_id: user.plano_id,
-      plano_nome: user.plano_nome,
-      plano_limite: user.plano_limite || 10,
-      permite_vip: user.permite_vip || false,
-      permite_destaque: user.permite_destaque || false,
-      limite_produtos: user.limite_produtos || 10,
-      bloqueado: user.bloqueado || false
+      limite_produtos: user.limite_produtos
     };
 
-    // Atualizar último login
-    await db.query(
-      'UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1',
-      [user.id]
-    );
-
-    console.log(`✅ Login bem-sucedido para: ${user.nome} (${user.email})`);
     req.flash('success', `Bem-vindo de volta, ${user.nome}!`);
     
-    // Redirecionar baseado no tipo de usuário
     if (user.tipo === 'admin') {
       res.redirect('/admin');
     } else if (user.tipo === 'vendedor') {
@@ -1526,122 +750,91 @@ app.post('/login', async (req, res) => {
       res.redirect('/');
     }
   } catch (error) {
-    console.error('❌ ERRO NO LOGIN:', error.message);
-    req.flash('error', 'Erro interno do servidor. Tente novamente.');
+    console.error('Erro no login:', error);
+    req.flash('error', 'Erro interno do servidor');
     res.redirect('/login');
   }
 });
 
-// ==================== REGISTRO COMPLETO ====================
 app.get('/registro', (req, res) => {
   if (req.session.user) {
     return res.redirect('/');
   }
-  res.render('auth/registro', { 
-    title: 'Registro - KuandaShop'
-  });
+  res.render('auth/registro', { title: 'Registro - KuandaShop' });
 });
 
 app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
-  const { nome, email, senha, confirmar_senha, telefone, tipo = 'cliente', nome_loja, descricao_loja } = req.body;
+  const { nome, email, senha, telefone, tipo, nome_loja, descricao_loja } = req.body;
   
   try {
-    console.log(`📝 Processando registro para: ${email}`);
-    
-    const validationErrors = validateUserData({ nome, email, senha, tipo, nome_loja }, false);
-    
-    if (senha !== confirmar_senha) {
-      validationErrors.push('As senhas não coincidem');
-    }
-    
-    if (validationErrors.length > 0) {
-      validationErrors.forEach(error => req.flash('error', error));
-      
-      if (req.file) {
-        try {
-          await fs.unlink(req.file.path);
-        } catch (unlinkError) {
-          console.error('Erro ao remover arquivo temporário:', unlinkError.message);
-        }
-      }
-      
+    // Validação básica
+    if (!nome || !email || !senha) {
+      req.flash('error', 'Nome, email e senha são obrigatórios');
       return res.redirect('/registro');
     }
 
-    const emailExiste = await db.query(
-      'SELECT id FROM usuarios WHERE email = $1',
-      [email.toLowerCase().trim()]
-    );
-    
+    if (senha.length < 6) {
+      req.flash('error', 'A senha deve ter pelo menos 6 caracteres');
+      return res.redirect('/registro');
+    }
+
+    if (tipo === 'vendedor' && !nome_loja) {
+      req.flash('error', 'Nome da loja é obrigatório para vendedores');
+      return res.redirect('/registro');
+    }
+
+    // Verificar se email já existe
+    const emailExiste = await db.query('SELECT id FROM usuarios WHERE email = $1', [email]);
     if (emailExiste.rows.length > 0) {
       if (req.file) {
-        try {
-          await fs.unlink(req.file.path);
-        } catch (unlinkError) {
-          // Ignorar erro
-        }
+        removeProfilePicture(req.file.filename);
       }
       req.flash('error', 'Este email já está cadastrado');
       return res.redirect('/registro');
     }
 
-    const senhaHash = await bcrypt.hash(senha, 12);
+    // Hash da senha
+    const senhaHash = await bcrypt.hash(senha, 10);
     
-    let fotoPerfilId = null;
-    if (req.file) {
-      try {
-        const imagemSalva = await salvarImagemBanco(req.file, 'perfil', null, null);
-        fotoPerfilId = imagemSalva ? imagemSalva.id : null;
-        console.log(`✅ Foto de perfil salva com ID: ${fotoPerfilId}`);
-      } catch (error) {
-        console.error('❌ Erro ao salvar foto de perfil:', error.message);
-      }
-    }
+    // Processar foto de perfil
+    const foto_perfil = req.file ? req.file.filename : null;
 
+    // Obter plano básico para vendedores
     let plano_id = null;
-    let limite_produtos = 10;
+    let limite_produtos = 10; // Default para clientes
     
     if (tipo === 'vendedor') {
-      try {
-        const planoBasico = await db.query(
-          "SELECT id, limite_produtos FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
-        );
-        if (planoBasico.rows.length > 0) {
-          plano_id = planoBasico.rows[0].id;
-          limite_produtos = planoBasico.rows[0].limite_produtos;
-          console.log(`✅ Plano básico atribuído: ID ${plano_id}, Limite: ${limite_produtos}`);
-        }
-      } catch (planoError) {
-        console.error('❌ Erro ao obter plano básico:', planoError.message);
+      const planoBasico = await db.query(
+        "SELECT id, limite_produtos FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
+      );
+      if (planoBasico.rows.length > 0) {
+        plano_id = planoBasico.rows[0].id;
+        limite_produtos = planoBasico.rows[0].limite_produtos;
       }
     }
 
+    // Inserir usuário no banco
     const result = await db.query(`
-      INSERT INTO usuarios (
-        nome, email, senha, telefone, tipo, nome_loja, 
-        descricao_loja, foto_perfil_id, loja_ativa, plano_id, limite_produtos,
-        email_verificado, created_at, updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id, nome, email, tipo, nome_loja, foto_perfil_id, plano_id, limite_produtos
+      INSERT INTO usuarios (nome, email, senha, telefone, tipo, nome_loja, descricao_loja, foto_perfil, loja_ativa, plano_id, limite_produtos)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id, nome, email, tipo, nome_loja, foto_perfil, plano_id, limite_produtos
     `, [
       nome.trim(),
-      email.toLowerCase().trim(),
+      email.trim().toLowerCase(),
       senhaHash,
       telefone ? telefone.trim() : null,
-      tipo,
+      tipo || 'cliente',
       nome_loja ? nome_loja.trim() : null,
       descricao_loja ? descricao_loja.trim() : null,
-      fotoPerfilId,
-      tipo === 'vendedor',
+      foto_perfil,
+      tipo === 'vendedor' ? true : null,
       plano_id,
-      limite_produtos,
-      tipo !== 'admin'
+      limite_produtos
     ]);
 
     const newUser = result.rows[0];
-    console.log(`✅ Usuário criado com ID: ${newUser.id}`);
 
+    // Auto-login após registro
     req.session.user = {
       id: newUser.id,
       nome: newUser.nome,
@@ -1649,14 +842,12 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
       tipo: newUser.tipo,
       nome_loja: newUser.nome_loja,
       loja_ativa: tipo === 'vendedor',
-      foto_perfil: newUser.foto_perfil_id ? `/imagem/${newUser.foto_perfil_id}` : null,
-      telefone: telefone ? telefone.trim() : null,
+      foto_perfil: newUser.foto_perfil,
       plano_id: newUser.plano_id,
-      limite_produtos: newUser.limite_produtos || 10
+      limite_produtos: newUser.limite_produtos
     };
 
-    req.flash('success', 'Conta criada com sucesso! Bem-vindo ao KuandaShop!');
-    console.log(`✅ Registro completo para: ${newUser.email}`);
+    req.flash('success', 'Conta criada com sucesso!');
     
     if (newUser.tipo === 'admin') {
       res.redirect('/admin');
@@ -1666,119 +857,67 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
       res.redirect('/');
     }
   } catch (error) {
-    console.error('❌ ERRO NO REGISTRO:', error.message);
-    console.error('Stack trace:', error.stack);
-    
+    // Remover arquivo enviado em caso de erro
     if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error('Erro ao remover arquivo temporário:', unlinkError.message);
-      }
+      removeProfilePicture(req.file.filename);
     }
-    
-    req.flash('error', 'Erro ao criar conta. Tente novamente ou entre em contato com o suporte.');
+    console.error('Erro no registro:', error);
+    req.flash('error', 'Erro ao criar conta. Tente novamente.');
     res.redirect('/registro');
   }
 });
 
-// ==================== LOGOUT ====================
 app.post('/logout', (req, res) => {
-  console.log(`👋 Logout do usuário: ${req.session.user?.id || 'desconhecido'}`);
   req.session.destroy((err) => {
     if (err) {
-      console.error('❌ Erro ao fazer logout:', err.message);
+      console.error('Erro ao fazer logout:', err);
     }
     res.redirect('/');
   });
 });
 
-// ==================== ROTAS DE PERFIL COMPLETAS ====================
+// ==================== ROTAS DE PERFIL ====================
 app.get('/perfil', requireAuth, async (req, res) => {
   try {
-    console.log(`👤 Carregando perfil do usuário ${req.session.user.id}...`);
-    
-    const usuario = await db.query(`
-      SELECT u.*, pv.nome as plano_nome, pv.preco_mensal, pv.limite_produtos as plano_limite,
-             pv.permite_vip, pv.permite_destaque
-      FROM usuarios u 
-      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
-      WHERE u.id = $1
-    `, [req.session.user.id]);
+    const usuario = await db.query('SELECT * FROM usuarios WHERE id = $1', [req.session.user.id]);
     
     if (usuario.rows.length === 0) {
       req.flash('error', 'Usuário não encontrado');
       return res.redirect('/');
     }
 
-    const usuarioData = usuario.rows[0];
-    usuarioData.foto_perfil_url = usuarioData.foto_perfil_id ? 
-      `/imagem/${usuarioData.foto_perfil_id}` : '/images/default-avatar.png';
-
-    let stats = null;
-    let produtosRecentes = [];
-    
-    if (req.session.user.tipo === 'vendedor') {
-      const [statsResult, produtosResult] = await Promise.all([
-        db.query(`
-          SELECT 
-            COUNT(p.id) as total_produtos,
-            COUNT(CASE WHEN p.ativo = true THEN 1 END) as produtos_ativos,
-            COUNT(DISTINCT s.id) as total_seguidores,
-            COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-            COUNT(DISTINCT a.id) as total_avaliacoes,
-            SUM(CASE WHEN p.vip = true THEN 1 ELSE 0 END) as produtos_vip,
-            SUM(CASE WHEN p.destaque = true THEN 1 ELSE 0 END) as produtos_destaque
-          FROM usuarios u
-          LEFT JOIN produtos p ON u.id = p.vendedor_id
-          LEFT JOIN seguidores s ON u.id = s.loja_id
-          LEFT JOIN avaliacoes a ON p.id = a.produto_id
-          WHERE u.id = $1
-          GROUP BY u.id
-        `, [req.session.user.id]),
-        db.query(`
-          SELECT p.*, c.nome as categoria_nome
-          FROM produtos p
-          LEFT JOIN categorias c ON p.categoria_id = c.id
-          WHERE p.vendedor_id = $1
-          ORDER BY p.created_at DESC
-          LIMIT 5
-        `, [req.session.user.id])
-      ]);
-      
-      if (statsResult.rows.length > 0) {
-        stats = {
-          total_produtos: parseInt(statsResult.rows[0].total_produtos) || 0,
-          produtos_ativos: parseInt(statsResult.rows[0].produtos_ativos) || 0,
-          total_seguidores: parseInt(statsResult.rows[0].total_seguidores) || 0,
-          media_classificacao: parseFloat(statsResult.rows[0].media_classificacao) || 0,
-          total_avaliacoes: parseInt(statsResult.rows[0].total_avaliacoes) || 0,
-          produtos_vip: parseInt(statsResult.rows[0].produtos_vip) || 0,
-          produtos_destaque: parseInt(statsResult.rows[0].produtos_destaque) || 0
-        };
-      }
-
-      produtosRecentes = produtosResult.rows.map(produto => ({
-        ...produto,
-        imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-        preco: parseFloat(produto.preco) || 0,
-        preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null
-      }));
+    // Buscar informações do plano se for vendedor
+    let planoInfo = null;
+    if (req.session.user.tipo === 'vendedor' && usuario.rows[0].plano_id) {
+      planoInfo = await db.query(
+        'SELECT * FROM planos_vendedor WHERE id = $1',
+        [usuario.rows[0].plano_id]
+      );
     }
 
+    // Contar produtos cadastrados
+    const produtosCount = await db.query(
+      'SELECT COUNT(*) as total FROM produtos WHERE vendedor_id = $1',
+      [req.session.user.id]
+    );
+
     res.render('perfil', { 
-      usuario: usuarioData,
-      stats,
-      produtosRecentes,
+      usuario: usuario.rows[0],
+      planoInfo: planoInfo ? planoInfo.rows[0] : null,
+      produtosCadastrados: produtosCount.rows[0].total,
       currentUser: req.session.user,
       title: 'Meu Perfil - KuandaShop'
     });
-    
-    console.log(`✅ Perfil do usuário ${req.session.user.id} carregado com sucesso`);
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR PERFIL:', error.message);
+    console.error('Erro ao carregar perfil:', error);
     req.flash('error', 'Erro ao carregar perfil');
-    res.redirect('/');
+    res.render('perfil', { 
+      usuario: {},
+      planoInfo: null,
+      produtosCadastrados: 0,
+      currentUser: req.session.user,
+      title: 'Meu Perfil'
+    });
   }
 });
 
@@ -1787,8 +926,7 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
     const userId = req.session.user.id;
     const { nome, telefone, nome_loja, descricao_loja, remover_foto } = req.body;
     
-    console.log(`✏️ Atualizando perfil do usuário ${userId}...`);
-    
+    // Obter usuário atual
     const usuarioAtual = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
     
     if (usuarioAtual.rows.length === 0) {
@@ -1796,39 +934,34 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
       return res.redirect('/perfil');
     }
     
-    let fotoPerfilId = usuarioAtual.rows[0].foto_perfil_id;
+    let fotoPerfil = usuarioAtual.rows[0].foto_perfil;
     
+    // Se marcar para remover foto
     if (remover_foto === '1' || remover_foto === 'true') {
-      if (fotoPerfilId) {
-        await deletarImagemBanco(fotoPerfilId);
-        console.log(`✅ Foto de perfil removida para usuário ${userId}`);
+      if (fotoPerfil) {
+        removeProfilePicture(fotoPerfil);
       }
-      fotoPerfilId = null;
+      fotoPerfil = null;
     }
     
+    // Se enviou nova foto
     if (req.file) {
-      console.log(`📸 Processando nova foto de perfil para usuário ${userId}`);
-      
-      if (fotoPerfilId) {
-        await deletarImagemBanco(fotoPerfilId);
+      // Remover foto antiga se existir
+      if (fotoPerfil && fotoPerfil !== req.file.filename) {
+        removeProfilePicture(fotoPerfil);
       }
+      fotoPerfil = req.file.filename;
       
-      try {
-        const imagemSalva = await salvarImagemBanco(req.file, 'perfil', userId, userId);
-        fotoPerfilId = imagemSalva ? imagemSalva.id : null;
-        
-        if (fotoPerfilId) {
-          console.log(`✅ Nova foto de perfil salva com ID: ${fotoPerfilId}`);
-        }
-      } catch (error) {
-        console.error('❌ Erro ao salvar nova foto:', error.message);
-      }
+      // Limpar fotos antigas do usuário
+      await removeOldProfilePicture(userId, fotoPerfil);
     }
     
-    const updateData = [nome.trim(), telefone ? telefone.trim() : null, fotoPerfilId];
-    let query = 'UPDATE usuarios SET nome = $1, telefone = $2, foto_perfil_id = $3';
+    // Preparar dados para atualização
+    const updateData = [nome.trim(), telefone ? telefone.trim() : null, fotoPerfil];
+    let query = 'UPDATE usuarios SET nome = $1, telefone = $2, foto_perfil = $3';
     let paramCount = 3;
 
+    // Adicionar campos específicos para vendedores
     if (req.session.user.tipo === 'vendedor') {
       if (nome_loja !== undefined) {
         paramCount++;
@@ -1843,34 +976,32 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
       }
     }
     
+    // Adicionar WHERE clause
     paramCount++;
     query += `, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount}`;
     updateData.push(userId);
     
+    // Executar atualização
     await db.query(query, updateData);
-    console.log(`✅ Perfil do usuário ${userId} atualizado no banco`);
     
+    // Atualizar sessão
     req.session.user.nome = nome;
     req.session.user.telefone = telefone || null;
     if (req.session.user.tipo === 'vendedor' && nome_loja !== undefined) {
       req.session.user.nome_loja = nome_loja || '';
     }
-    if (fotoPerfilId) {
-      req.session.user.foto_perfil = `/imagem/${fotoPerfilId}`;
+    if (fotoPerfil) {
+      req.session.user.foto_perfil = fotoPerfil;
     }
     
     req.flash('success', 'Perfil atualizado com sucesso!');
-    console.log(`✅ Perfil do usuário ${userId} atualizado com sucesso`);
     res.redirect('/perfil');
   } catch (error) {
-    console.error('❌ ERRO AO ATUALIZAR PERFIL:', error.message);
+    console.error('Erro ao atualizar perfil:', error);
     
+    // Remover arquivo enviado em caso de erro
     if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error('Erro ao remover arquivo temporário:', unlinkError.message);
-      }
+      removeProfilePicture(req.file.filename);
     }
     
     req.flash('error', 'Erro ao atualizar perfil');
@@ -1878,89 +1009,124 @@ app.post('/perfil/atualizar', requireAuth, uploadPerfil.single('foto_perfil'), a
   }
 });
 
-// ==================== ROTAS DO CARRINHO COMPLETAS ====================
+app.post('/perfil/alterar-senha', requireAuth, async (req, res) => {
+  const { senha_atual, nova_senha, confirmar_senha } = req.body;
+  
+  try {
+    // Validar campos
+    if (!senha_atual || !nova_senha || !confirmar_senha) {
+      req.flash('error', 'Todos os campos são obrigatórios');
+      return res.redirect('/perfil');
+    }
+    
+    if (nova_senha !== confirmar_senha) {
+      req.flash('error', 'As novas senhas não coincidem');
+      return res.redirect('/perfil');
+    }
+    
+    if (nova_senha.length < 6) {
+      req.flash('error', 'A nova senha deve ter pelo menos 6 caracteres');
+      return res.redirect('/perfil');
+    }
+    
+    // Verificar senha atual
+    const usuario = await db.query('SELECT senha FROM usuarios WHERE id = $1', [req.session.user.id]);
+    
+    if (usuario.rows.length === 0) {
+      req.flash('error', 'Usuário não encontrado');
+      return res.redirect('/perfil');
+    }
+    
+    const senhaValida = await bcrypt.compare(senha_atual, usuario.rows[0].senha);
+    
+    if (!senhaValida) {
+      req.flash('error', 'Senha atual incorreta');
+      return res.redirect('/perfil');
+    }
+    
+    // Hash da nova senha
+    const novaSenhaHash = await bcrypt.hash(nova_senha, 10);
+    
+    // Atualizar senha
+    await db.query(
+      'UPDATE usuarios SET senha = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novaSenhaHash, req.session.user.id]
+    );
+    
+    req.flash('success', 'Senha alterada com sucesso!');
+    res.redirect('/perfil');
+  } catch (error) {
+    console.error('Erro ao alterar senha:', error);
+    req.flash('error', 'Erro ao alterar senha');
+    res.redirect('/perfil');
+  }
+});
+
+// ==================== ROTAS DO CARRINHO ====================
 app.get('/carrinho/quantidade', (req, res) => {
   try {
     const carrinho = req.session.carrinho || [];
     const quantidade = carrinho.reduce((total, item) => total + (item.quantidade || 0), 0);
     res.json({ success: true, quantidade });
   } catch (error) {
-    console.error('❌ Erro ao obter quantidade do carrinho:', error.message);
+    console.error('Erro ao obter quantidade do carrinho:', error);
     res.json({ success: false, quantidade: 0 });
   }
 });
 
 app.get('/carrinho', async (req, res) => {
   try {
-    console.log(`🛒 Carregando carrinho para usuário ${req.session.user?.id || 'guest'}...`);
-    
     const carrinho = req.session.carrinho || [];
     
+    // Buscar informações atualizadas dos produtos
     if (carrinho.length > 0) {
-      const produtosIds = carrinho.map(item => item.id).filter(id => id);
-      
-      if (produtosIds.length > 0) {
-        const produtos = await db.query(`
-          SELECT p.*, u.nome_loja, u.telefone as vendedor_telefone,
-                 u.foto_perfil_id as vendedor_foto_id
-          FROM produtos p
-          JOIN usuarios u ON p.vendedor_id = u.id
-          WHERE p.id = ANY($1) AND p.ativo = true AND u.loja_ativa = true
-        `, [produtosIds]);
+      const produtosIds = carrinho.map(item => item.id);
+      const produtos = await db.query(`
+        SELECT p.*, u.nome_loja, u.telefone as vendedor_telefone
+        FROM produtos p
+        JOIN usuarios u ON p.vendedor_id = u.id
+        WHERE p.id = ANY($1) AND p.ativo = true AND u.loja_ativa = true
+      `, [produtosIds]);
 
-        const produtoMap = {};
-        produtos.rows.forEach(prod => {
-          produtoMap[prod.id] = prod;
-        });
+      const produtoMap = {};
+      produtos.rows.forEach(prod => {
+        produtoMap[prod.id] = prod;
+      });
 
-        carrinho.forEach(item => {
-          const produto = produtoMap[item.id];
-          if (produto) {
-            item.nome = produto.nome;
-            item.preco = produto.preco_promocional || produto.preco;
-            item.imagem_url = produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png';
-            item.vendedor = produto.nome_loja;
-            item.vendedor_telefone = produto.vendedor_telefone;
-            item.vendedor_foto_url = produto.vendedor_foto_id ? `/imagem/${produto.vendedor_foto_id}` : '/images/default-avatar.png';
-            item.estoque = produto.estoque;
-            item.preco_original = produto.preco;
-            item.tem_promocao = !!produto.preco_promocional;
-          }
-        });
+      // Atualizar carrinho com dados do banco
+      carrinho.forEach(item => {
+        const produto = produtoMap[item.id];
+        if (produto) {
+          item.nome = produto.nome;
+          item.preco = produto.preco_promocional || produto.preco;
+          item.imagem = produto.imagem1;
+          item.vendedor = produto.nome_loja;
+          item.vendedor_telefone = produto.vendedor_telefone;
+          item.estoque = produto.estoque;
+        }
+      });
 
-        req.session.carrinho = carrinho.filter(item => {
-          const produto = produtoMap[item.id];
-          return produto && produto.estoque >= (item.quantidade || 1);
-        });
-      }
+      // Remover produtos não encontrados ou sem estoque
+      req.session.carrinho = carrinho.filter(item => {
+        const produto = produtoMap[item.id];
+        return produto && produto.estoque >= item.quantidade;
+      });
     }
 
     const total = req.session.carrinho.reduce((total, item) => {
-      const preco = item.preco || 0;
-      const quantidade = item.quantidade || 0;
-      return total + (preco * quantidade);
+      return total + (item.preco || 0) * (item.quantidade || 0);
     }, 0);
 
-    const subtotal = total;
-    const frete = 0;
-    const totalComFrete = subtotal + frete;
-
-    console.log(`✅ Carrinho carregado com ${req.session.carrinho.length} itens`);
-    
     res.render('carrinho', {
-      carrinho: req.session.carrinho,
-      subtotal: subtotal.toFixed(2),
-      frete: frete.toFixed(2),
-      total: totalComFrete.toFixed(2),
+      carrinho: req.session.carrinho || [],
+      total: total.toFixed(2),
       title: 'Carrinho de Compras - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR CARRINHO:', error.message);
+    console.error('Erro ao carregar carrinho:', error);
     res.render('carrinho', {
       carrinho: req.session.carrinho || [],
-      subtotal: '0.00',
-      frete: '0.00',
-      total: '0.00',
+      total: 0,
       title: 'Carrinho de Compras'
     });
   }
@@ -1970,9 +1136,8 @@ app.post('/carrinho/adicionar', async (req, res) => {
   try {
     const { produto_id, quantidade = 1 } = req.body;
     const quantidadeNum = parseInt(quantidade) || 1;
-    
-    console.log(`➕ Adicionando produto ${produto_id} ao carrinho (quantidade: ${quantidadeNum})`);
 
+    // Buscar produto
     const produto = await db.query(`
       SELECT p.*, u.nome_loja, u.telefone as vendedor_telefone, u.id as vendedor_id
       FROM produtos p
@@ -1989,20 +1154,24 @@ app.post('/carrinho/adicionar', async (req, res) => {
 
     const produtoData = produto.rows[0];
     
+    // Verificar estoque
     if (quantidadeNum > produtoData.estoque) {
       return res.json({ 
         success: false, 
-        message: `Quantidade indisponível. Estoque disponível: ${produtoData.estoque}` 
+        message: `Quantidade indisponível. Estoque: ${produtoData.estoque}` 
       });
     }
 
+    // Inicializar carrinho se não existir
     if (!req.session.carrinho) {
       req.session.carrinho = [];
     }
 
+    // Verificar se produto já está no carrinho
     const itemIndex = req.session.carrinho.findIndex(item => item.id == produto_id);
     
     if (itemIndex > -1) {
+      // Verificar se a nova quantidade ultrapassa o estoque
       const novaQuantidade = req.session.carrinho[itemIndex].quantidade + quantidadeNum;
       if (novaQuantidade > produtoData.estoque) {
         return res.json({ 
@@ -2011,7 +1180,6 @@ app.post('/carrinho/adicionar', async (req, res) => {
         });
       }
       req.session.carrinho[itemIndex].quantidade = novaQuantidade;
-      console.log(`✅ Produto ${produto_id} atualizado no carrinho (nova quantidade: ${novaQuantidade})`);
     } else {
       const preco = produtoData.preco_promocional || produtoData.preco;
       
@@ -2019,19 +1187,16 @@ app.post('/carrinho/adicionar', async (req, res) => {
         id: Number(produtoData.id),
         nome: produtoData.nome,
         preco: Number(parseFloat(preco).toFixed(2)),
-        preco_original: Number(parseFloat(produtoData.preco).toFixed(2)),
-        imagem_id: produtoData.imagem1_id,
-        imagem_url: produtoData.imagem1_id ? `/imagem/${produtoData.imagem1_id}` : '/images/placeholder-product.png',
+        imagem: produtoData.imagem1,
         quantidade: quantidadeNum,
         vendedor: produtoData.nome_loja,
         vendedor_id: Number(produtoData.vendedor_id),
         vendedor_telefone: produtoData.vendedor_telefone,
-        estoque: Number(produtoData.estoque),
-        tem_promocao: !!produtoData.preco_promocional
+        estoque: Number(produtoData.estoque)
       });
-      console.log(`✅ Produto ${produto_id} adicionado ao carrinho`);
     }
 
+    // Calcular quantidade total
     const quantidadeTotal = req.session.carrinho.reduce((total, item) => total + item.quantidade, 0);
 
     res.json({ 
@@ -2041,7 +1206,7 @@ app.post('/carrinho/adicionar', async (req, res) => {
       carrinho: req.session.carrinho.length
     });
   } catch (error) {
-    console.error('❌ ERRO AO ADICIONAR AO CARRINHO:', error.message);
+    console.error('Erro ao adicionar ao carrinho:', error);
     res.json({ 
       success: false, 
       message: 'Erro interno do servidor' 
@@ -2049,11 +1214,149 @@ app.post('/carrinho/adicionar', async (req, res) => {
   }
 });
 
-// ==================== PAINEL DO VENDEDOR COMPLETO ====================
+app.get('/carrinho/data', (req, res) => {
+  try {
+    const carrinho = req.session.carrinho || [];
+    const carrinhoCorrigido = carrinho.map(item => ({
+      ...item,
+      preco: Number(item.preco) || 0,
+      quantidade: Number(item.quantidade) || 0
+    }));
+    
+    res.json({ 
+      success: true, 
+      carrinho: carrinhoCorrigido,
+      quantidade: carrinhoCorrigido.reduce((total, item) => total + item.quantidade, 0)
+    });
+  } catch (error) {
+    console.error('Erro ao obter dados do carrinho:', error);
+    res.json({ success: false, carrinho: [], quantidade: 0 });
+  }
+});
+
+app.post('/carrinho/atualizar', async (req, res) => {
+  try {
+    const { produto_id, quantidade } = req.body;
+    const quantidadeNum = parseInt(quantidade) || 1;
+
+    if (!req.session.carrinho) {
+      return res.json({ success: false, message: 'Carrinho vazio' });
+    }
+
+    const itemIndex = req.session.carrinho.findIndex(item => item.id == produto_id);
+    
+    if (itemIndex === -1) {
+      return res.json({ success: false, message: 'Produto não encontrado no carrinho' });
+    }
+
+    // Buscar estoque atual
+    const produto = await db.query(
+      'SELECT estoque FROM produtos WHERE id = $1 AND ativo = true',
+      [produto_id]
+    );
+
+    if (produto.rows.length === 0) {
+      return res.json({ success: false, message: 'Produto não encontrado' });
+    }
+
+    const estoqueDisponivel = produto.rows[0].estoque;
+
+    // Validar quantidade
+    if (quantidadeNum < 1) {
+      return res.json({ success: false, message: 'Quantidade mínima é 1' });
+    }
+
+    if (quantidadeNum > estoqueDisponivel) {
+      return res.json({ 
+        success: false, 
+        message: `Quantidade indisponível. Estoque: ${estoqueDisponivel}` 
+      });
+    }
+
+    // Atualizar quantidade
+    req.session.carrinho[itemIndex].quantidade = quantidadeNum;
+
+    // Calcular totais
+    const quantidadeTotal = req.session.carrinho.reduce((total, item) => total + item.quantidade, 0);
+    const subtotal = req.session.carrinho[itemIndex].preco * quantidadeNum;
+    const totalGeral = req.session.carrinho.reduce((total, item) => {
+      return total + (item.preco * item.quantidade);
+    }, 0);
+
+    res.json({ 
+      success: true, 
+      message: 'Quantidade atualizada',
+      quantidade: quantidadeTotal,
+      subtotal: subtotal.toFixed(2),
+      total: totalGeral.toFixed(2)
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar carrinho:', error);
+    res.json({ success: false, message: 'Erro ao atualizar quantidade' });
+  }
+});
+
+app.post('/carrinho/remover', async (req, res) => {
+  try {
+    const { produto_id } = req.body;
+
+    if (!req.session.carrinho) {
+      return res.json({ success: false, message: 'Carrinho vazio' });
+    }
+
+    const initialLength = req.session.carrinho.length;
+    req.session.carrinho = req.session.carrinho.filter(item => item.id != produto_id);
+    
+    if (req.session.carrinho.length < initialLength) {
+      const quantidadeTotal = req.session.carrinho.reduce((total, item) => total + item.quantidade, 0);
+      
+      res.json({ 
+        success: true, 
+        message: 'Produto removido do carrinho',
+        quantidade: quantidadeTotal
+      });
+    } else {
+      res.json({ success: false, message: 'Produto não encontrado no carrinho' });
+    }
+  } catch (error) {
+    console.error('Erro ao remover do carrinho:', error);
+    res.json({ success: false, message: 'Erro ao remover produto' });
+  }
+});
+
+app.post('/carrinho/limpar', (req, res) => {
+  try {
+    req.session.carrinho = [];
+    res.json({ 
+      success: true, 
+      message: 'Carrinho limpo com sucesso',
+      quantidade: 0
+    });
+  } catch (error) {
+    console.error('Erro ao limpar carrinho:', error);
+    res.json({ success: false, message: 'Erro ao limpar carrinho' });
+  }
+});
+
+app.get('/api/current-user', (req, res) => {
+  if (req.session.user) {
+    res.json({ 
+      success: true, 
+      user: {
+        nome: req.session.user.nome,
+        telefone: req.session.user.telefone,
+        email: req.session.user.email,
+        foto_perfil: req.session.user.foto_perfil
+      }
+    });
+  } else {
+    res.json({ success: false, user: null });
+  }
+});
+
+// ==================== PAINEL DO VENDEDOR ====================
 app.get('/vendedor', requireVendor, async (req, res) => {
   try {
-    console.log(`🏪 Carregando painel do vendedor ${req.session.user.id}...`);
-    
     const [stats, produtosRecentes, solicitacoesPendentes, limiteInfo] = await Promise.all([
       db.query(`
         SELECT 
@@ -2063,9 +1366,7 @@ app.get('/vendedor', requireVendor, async (req, res) => {
           COALESCE(AVG(a.classificacao), 0) as media_classificacao,
           COUNT(DISTINCT a.id) as total_avaliacoes,
           SUM(CASE WHEN p.vip = true THEN 1 ELSE 0 END) as produtos_vip,
-          SUM(CASE WHEN p.destaque = true THEN 1 ELSE 0 END) as produtos_destaque,
-          SUM(p.vendas_count) as total_vendas,
-          SUM(p.views_count) as total_visualizacoes
+          SUM(CASE WHEN p.destaque = true THEN 1 ELSE 0 END) as produtos_destaque
         FROM produtos p
         LEFT JOIN seguidores s ON p.vendedor_id = s.loja_id
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
@@ -2074,13 +1375,11 @@ app.get('/vendedor', requireVendor, async (req, res) => {
       db.query(`
         SELECT p.*, 
                COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-               COUNT(a.id) as total_avaliacoes,
-               c.nome as categoria_nome
+               COUNT(a.id) as total_avaliacoes
         FROM produtos p
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
-        LEFT JOIN categorias c ON p.categoria_id = c.id
         WHERE p.vendedor_id = $1
-        GROUP BY p.id, c.nome
+        GROUP BY p.id
         ORDER BY p.created_at DESC
         LIMIT 5
       `, [req.session.user.id]),
@@ -2089,6 +1388,7 @@ app.get('/vendedor', requireVendor, async (req, res) => {
         FROM solicitacoes_vip 
         WHERE vendedor_id = $1 AND status = 'pendente'
       `, [req.session.user.id]),
+      // NOVA CONSULTA: Informações de limite
       db.query(`
         SELECT 
           u.limite_produtos,
@@ -2097,77 +1397,34 @@ app.get('/vendedor', requireVendor, async (req, res) => {
           pv.nome as plano_nome,
           pv.preco_mensal,
           pv.permite_vip,
-          pv.permite_destaque,
-          pv.limite_produtos as plano_limite_total
+          pv.permite_destaque
         FROM usuarios u
         LEFT JOIN produtos p ON u.id = p.vendedor_id
         LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
         WHERE u.id = $1
-        GROUP BY u.id, u.limite_produtos, pv.nome, pv.preco_mensal, pv.permite_vip, pv.permite_destaque, pv.limite_produtos
+        GROUP BY u.id, u.limite_produtos, pv.nome, pv.preco_mensal, pv.permite_vip, pv.permite_destaque
       `, [req.session.user.id])
     ]);
 
-    const produtosRecentesComImagens = produtosRecentes.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      imagem2_url: produto.imagem2_id ? `/imagem/${produto.imagem2_id}` : null,
-      imagem3_url: produto.imagem3_id ? `/imagem/${produto.imagem3_id}` : null,
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null,
-      estoque: parseInt(produto.estoque) || 0,
-      media_classificacao: parseFloat(produto.media_classificacao) || 0,
-      total_avaliacoes: parseInt(produto.total_avaliacoes) || 0
-    }));
-
-    const statsData = stats.rows[0] || {};
-    const statsProcessed = {
-      total_produtos: parseInt(statsData.total_produtos) || 0,
-      produtos_ativos: parseInt(statsData.produtos_ativos) || 0,
-      total_seguidores: parseInt(statsData.total_seguidores) || 0,
-      media_classificacao: parseFloat(statsData.media_classificacao) || 0,
-      total_avaliacoes: parseInt(statsData.total_avaliacoes) || 0,
-      produtos_vip: parseInt(statsData.produtos_vip) || 0,
-      produtos_destaque: parseInt(statsData.produtos_destaque) || 0,
-      total_vendas: parseInt(statsData.total_vendas) || 0,
-      total_visualizacoes: parseInt(statsData.total_visualizacoes) || 0
-    };
-
-    const limiteInfoData = limiteInfo.rows[0] || { 
-      limite_produtos: 10, 
-      produtos_cadastrados: 0, 
-      produtos_disponiveis: 10,
-      plano_nome: 'Básico',
-      preco_mensal: 0,
-      permite_vip: false,
-      permite_destaque: false,
-      plano_limite_total: 10
-    };
-
-    console.log(`✅ Painel do vendedor ${req.session.user.id} carregado`);
-    console.log(`   📊 Produtos: ${statsProcessed.total_produtos} total, ${statsProcessed.produtos_ativos} ativos`);
-
     res.render('vendedor/dashboard', {
-      stats: statsProcessed,
-      produtosRecentes: produtosRecentesComImagens,
-      solicitacoesPendentes: solicitacoesPendentes.rows[0]?.total || 0,
-      limiteInfo: limiteInfoData,
+      stats: stats.rows[0],
+      produtosRecentes: produtosRecentes.rows,
+      solicitacoesPendentes: solicitacoesPendentes.rows[0].total,
+      limiteInfo: limiteInfo.rows[0] || { 
+        limite_produtos: 10, 
+        produtos_cadastrados: 0, 
+        produtos_disponiveis: 10,
+        plano_nome: 'Básico',
+        preco_mensal: 0,
+        permite_vip: false,
+        permite_destaque: false 
+      },
       title: 'Painel do Vendedor - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO NO DASHBOARD DO VENDEDOR:', error.message);
-    
+    console.error('Erro no dashboard do vendedor:', error);
     res.render('vendedor/dashboard', {
-      stats: {
-        total_produtos: 0,
-        produtos_ativos: 0,
-        total_seguidores: 0,
-        media_classificacao: 0,
-        total_avaliacoes: 0,
-        produtos_vip: 0,
-        produtos_destaque: 0,
-        total_vendas: 0,
-        total_visualizacoes: 0
-      },
+      stats: {},
       produtosRecentes: [],
       solicitacoesPendentes: 0,
       limiteInfo: { 
@@ -2177,32 +1434,28 @@ app.get('/vendedor', requireVendor, async (req, res) => {
         plano_nome: 'Básico',
         preco_mensal: 0,
         permite_vip: false,
-        permite_destaque: false,
-        plano_limite_total: 10
+        permite_destaque: false 
       },
       title: 'Painel do Vendedor'
     });
   }
 });
 
-// ==================== GERENCIAMENTO DE PRODUTOS DO VENDEDOR ====================
 app.get('/vendedor/produtos', requireVendor, async (req, res) => {
   try {
-    console.log(`📋 Carregando produtos do vendedor ${req.session.user.id}...`);
-    
+    // Buscar informações do plano primeiro
     const planoInfo = await db.query(`
       SELECT 
         u.limite_produtos,
         COUNT(p.id) as produtos_cadastrados,
         (u.limite_produtos - COUNT(p.id)) as produtos_disponiveis,
         pv.permite_vip,
-        pv.permite_destaque,
-        pv.nome as plano_nome
+        pv.permite_destaque
       FROM usuarios u
       LEFT JOIN produtos p ON u.id = p.vendedor_id
       LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
       WHERE u.id = $1
-      GROUP BY u.id, u.limite_produtos, pv.permite_vip, pv.permite_destaque, pv.nome
+      GROUP BY u.id, u.limite_produtos, pv.permite_vip, pv.permite_destaque
     `, [req.session.user.id]);
 
     const produtos = await db.query(`
@@ -2215,41 +1468,22 @@ app.get('/vendedor/produtos', requireVendor, async (req, res) => {
       LEFT JOIN categorias c ON p.categoria_id = c.id
       WHERE p.vendedor_id = $1
       GROUP BY p.id, c.nome
-      ORDER BY 
-        CASE WHEN p.ativo = true THEN 0 ELSE 1 END,
-        p.created_at DESC
+      ORDER BY p.created_at DESC
     `, [req.session.user.id]);
 
-    const produtosComImagens = produtos.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      imagem2_url: produto.imagem2_id ? `/imagem/${produto.imagem2_id}` : null,
-      imagem3_url: produto.imagem3_id ? `/imagem/${produto.imagem3_id}` : null,
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null,
-      estoque: parseInt(produto.estoque) || 0,
-      media_classificacao: parseFloat(produto.media_classificacao) || 0,
-      total_avaliacoes: parseInt(produto.total_avaliacoes) || 0
-    }));
-
-    const limiteInfo = planoInfo.rows[0] || { 
-      limite_produtos: 10, 
-      produtos_cadastrados: 0, 
-      produtos_disponiveis: 10,
-      permite_vip: false,
-      permite_destaque: false,
-      plano_nome: 'Básico'
-    };
-
-    console.log(`✅ ${produtosComImagens.length} produtos carregados para vendedor ${req.session.user.id}`);
-
     res.render('vendedor/produtos', {
-      produtos: produtosComImagens,
-      limiteInfo,
+      produtos: produtos.rows,
+      limiteInfo: planoInfo.rows[0] || { 
+        limite_produtos: 10, 
+        produtos_cadastrados: 0, 
+        produtos_disponiveis: 10,
+        permite_vip: false,
+        permite_destaque: false 
+      },
       title: 'Meus Produtos - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR PRODUTOS DO VENDEDOR:', error.message);
+    console.error('Erro ao carregar produtos do vendedor:', error);
     res.render('vendedor/produtos', { 
       produtos: [],
       limiteInfo: { 
@@ -2257,8 +1491,7 @@ app.get('/vendedor/produtos', requireVendor, async (req, res) => {
         produtos_cadastrados: 0, 
         produtos_disponiveis: 10,
         permite_vip: false,
-        permite_destaque: false,
-        plano_nome: 'Básico'
+        permite_destaque: false 
       },
       title: 'Meus Produtos'
     });
@@ -2267,8 +1500,7 @@ app.get('/vendedor/produtos', requireVendor, async (req, res) => {
 
 app.get('/vendedor/produto/novo', requireVendor, async (req, res) => {
   try {
-    console.log(`➕ Carregando formulário de novo produto para vendedor ${req.session.user.id}...`);
-    
+    // Verificar limite antes de mostrar o formulário
     const limiteInfo = await db.query(`
       SELECT 
         u.limite_produtos,
@@ -2288,7 +1520,7 @@ app.get('/vendedor/produto/novo', requireVendor, async (req, res) => {
       produtos_cadastrados: 0, 
       produtos_disponiveis: 10,
       permite_vip: false,
-      permite_destaque: false
+      permite_destaque: false 
     };
     
     if (limiteData.produtos_disponiveis <= 0) {
@@ -2296,9 +1528,7 @@ app.get('/vendedor/produto/novo', requireVendor, async (req, res) => {
       return res.redirect('/vendedor/produtos');
     }
     
-    const categorias = await db.query('SELECT * FROM categorias WHERE ativo = true ORDER BY nome');
-    
-    console.log(`✅ Formulário de novo produto carregado`);
+    const categorias = await db.query('SELECT * FROM categorias ORDER BY nome');
     
     res.render('vendedor/produto-form', {
       produto: null,
@@ -2311,7 +1541,7 @@ app.get('/vendedor/produto/novo', requireVendor, async (req, res) => {
       title: 'Novo Produto - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR FORMULÁRIO DE PRODUTO:', error.message);
+    console.error('Erro ao carregar formulário:', error);
     res.render('vendedor/produto-form', {
       produto: null,
       categorias: [],
@@ -2333,8 +1563,7 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
   const { nome, descricao, preco, preco_promocional, categoria_id, estoque, destaque, vip } = req.body;
   
   try {
-    console.log(`📝 Criando novo produto para vendedor ${req.session.user.id}...`);
-    
+    // VERIFICAÇÃO DE LIMITE DE PRODUTOS
     const statsVendedor = await db.query(`
       SELECT 
         u.limite_produtos,
@@ -2353,89 +1582,45 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
       const totalProdutos = parseInt(stats.total_produtos);
       const limiteProdutos = parseInt(stats.limite_produtos) || 10;
       
+      // Verificar limite de produtos
       if (totalProdutos >= limiteProdutos) {
         req.flash('error', `Limite de ${limiteProdutos} produtos atingido. Atualize seu plano para cadastrar mais produtos.`);
         return res.redirect('/vendedor/produto/novo');
       }
       
+      // Verificar se plano permite VIP
       if (vip === 'on' && !stats.permite_vip) {
         req.flash('error', 'Seu plano atual não permite anúncios VIP. Atualize seu plano.');
         return res.redirect('/vendedor/produto/novo');
       }
       
+      // Verificar se plano permite destaque
       if (destaque === 'on' && !stats.permite_destaque) {
         req.flash('error', 'Seu plano atual não permite produtos em destaque. Atualize seu plano.');
         return res.redirect('/vendedor/produto/novo');
       }
     }
     
+    // Validar dados
     const validationErrors = validateProductData({ nome, descricao, preco, categoria_id, estoque });
     if (validationErrors.length > 0) {
-      validationErrors.forEach(error => {
-        console.log(`❌ Erro de validação: ${error}`);
-        req.flash('error', error);
-      });
+      validationErrors.forEach(error => req.flash('error', error));
       return res.redirect('/vendedor/produto/novo');
     }
 
-    let imagem1Id = null;
-    let imagem2Id = null;
-    let imagem3Id = null;
+    const imagem1 = req.files.imagem1 ? req.files.imagem1[0].filename : null;
+    const imagem2 = req.files.imagem2 ? req.files.imagem2[0].filename : null;
+    const imagem3 = req.files.imagem3 ? req.files.imagem3[0].filename : null;
 
-    console.log(`📸 Processando imagens...`);
-    
-    if (req.files.imagem1) {
-      console.log(`   Imagem 1 enviada: ${req.files.imagem1[0].filename}`);
-      const imagemSalva = await salvarImagemBanco(
-        req.files.imagem1[0], 
-        'produto', 
-        null, 
-        req.session.user.id
-      );
-      imagem1Id = imagemSalva ? imagemSalva.id : null;
-      console.log(`   Imagem 1 salva com ID: ${imagem1Id}`);
-    }
-
-    if (req.files.imagem2 && req.files.imagem2[0]) {
-      console.log(`   Imagem 2 enviada: ${req.files.imagem2[0].filename}`);
-      const imagemSalva = await salvarImagemBanco(
-        req.files.imagem2[0], 
-        'produto', 
-        null, 
-        req.session.user.id
-      );
-      imagem2Id = imagemSalva ? imagemSalva.id : null;
-      console.log(`   Imagem 2 salva com ID: ${imagem2Id}`);
-    }
-
-    if (req.files.imagem3 && req.files.imagem3[0]) {
-      console.log(`   Imagem 3 enviada: ${req.files.imagem3[0].filename}`);
-      const imagemSalva = await salvarImagemBanco(
-        req.files.imagem3[0], 
-        'produto', 
-        null, 
-        req.session.user.id
-      );
-      imagem3Id = imagemSalva ? imagemSalva.id : null;
-      console.log(`   Imagem 3 salva com ID: ${imagem3Id}`);
-    }
-
-    if (!imagem1Id) {
-      console.log(`❌ Nenhuma imagem principal enviada`);
+    // Se não enviou imagem principal
+    if (!imagem1) {
       req.flash('error', 'A imagem principal é obrigatória');
       return res.redirect('/vendedor/produto/novo');
     }
 
-    console.log(`💾 Inserindo produto no banco de dados...`);
-    
-    const result = await db.query(`
-      INSERT INTO produtos (
-        nome, descricao, preco, preco_promocional, categoria_id, 
-        estoque, imagem1_id, imagem2_id, imagem3_id, vendedor_id, 
-        destaque, vip, ativo, created_at, updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id
+    await db.query(`
+      INSERT INTO produtos (nome, descricao, preco, preco_promocional, categoria_id, estoque, imagem1, imagem2, imagem3, vendedor_id, destaque, vip)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     `, [
       nome.trim(),
       descricao.trim(),
@@ -2443,58 +1628,468 @@ app.post('/vendedor/produto', requireVendor, upload.fields([
       preco_promocional ? parseFloat(preco_promocional) : null,
       parseInt(categoria_id),
       parseInt(estoque),
-      imagem1Id,
-      imagem2Id,
-      imagem3Id,
+      imagem1,
+      imagem2,
+      imagem3,
       req.session.user.id,
       destaque === 'on',
       vip === 'on'
     ]);
 
-    const produtoId = result.rows[0].id;
-    console.log(`✅ Produto criado com ID: ${produtoId}`);
-
-    if (imagem1Id || imagem2Id || imagem3Id) {
-      await db.query(`
-        UPDATE imagens 
-        SET entidade_id = $1 
-        WHERE id IN ($2, $3, $4) AND entidade_id IS NULL
-      `, [produtoId, imagem1Id, imagem2Id, imagem3Id].filter(id => id !== null));
-      console.log(`✅ Imagens vinculadas ao produto ${produtoId}`);
-    }
-
     req.flash('success', 'Produto cadastrado com sucesso!');
-    console.log(`🎉 Produto ${produtoId} cadastrado com sucesso para vendedor ${req.session.user.id}`);
     res.redirect('/vendedor/produtos');
   } catch (error) {
-    console.error('❌ ERRO AO CADASTRAR PRODUTO:', error.message);
-    console.error('Stack trace:', error.stack);
+    console.error('Erro ao cadastrar produto:', error);
     
+    // Remover arquivos enviados em caso de erro
     if (req.files) {
-      console.log(`🗑️ Limpando arquivos temporários...`);
-      const files = Object.values(req.files).flat();
-      for (const file of files) {
-        if (file && file.path) {
-          try {
-            await fs.unlink(file.path);
-            console.log(`   Removido: ${file.path}`);
-          } catch (unlinkError) {
-            console.error(`   Erro ao remover ${file.path}:`, unlinkError.message);
+      Object.values(req.files).forEach(fileArray => {
+        if (fileArray && fileArray[0]) {
+          const filePath = path.join('public/uploads/produtos/', fileArray[0].filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
           }
         }
-      }
+      });
     }
     
-    req.flash('error', 'Erro ao cadastrar produto: ' + error.message);
+    req.flash('error', 'Erro ao cadastrar produto');
     res.redirect('/vendedor/produto/novo');
   }
 });
 
-// ==================== PAINEL ADMINISTRATIVO COMPLETO ====================
+app.get('/vendedor/produto/:id/editar', requireVendor, async (req, res) => {
+  try {
+    const produto = await db.query(
+      'SELECT * FROM produtos WHERE id = $1 AND vendedor_id = $2',
+      [req.params.id, req.session.user.id]
+    );
+
+    if (produto.rows.length === 0) {
+      req.flash('error', 'Produto não encontrado');
+      return res.redirect('/vendedor/produtos');
+    }
+
+    // Buscar informações do plano
+    const planoInfo = await db.query(`
+      SELECT pv.permite_vip, pv.permite_destaque
+      FROM usuarios u
+      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
+      WHERE u.id = $1
+    `, [req.session.user.id]);
+
+    const categorias = await db.query('SELECT * FROM categorias ORDER BY nome');
+    
+    res.render('vendedor/produto-form', {
+      produto: produto.rows[0],
+      categorias: categorias.rows,
+      permiteVip: planoInfo.rows[0]?.permite_vip || false,
+      permiteDestaque: planoInfo.rows[0]?.permite_destaque || false,
+      action: `/vendedor/produto/${req.params.id}?_method=PUT`,
+      title: 'Editar Produto - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar produto para edição:', error);
+    req.flash('error', 'Erro ao carregar produto');
+    res.redirect('/vendedor/produtos');
+  }
+});
+
+app.put('/vendedor/produto/:id', requireVendor, upload.fields([
+  { name: 'imagem1', maxCount: 1 },
+  { name: 'imagem2', maxCount: 1 },
+  { name: 'imagem3', maxCount: 1 }
+]), async (req, res) => {
+  const { nome, descricao, preco, preco_promocional, categoria_id, estoque, destaque, vip } = req.body;
+  
+  try {
+    const produtoAtual = await db.query(
+      'SELECT * FROM produtos WHERE id = $1 AND vendedor_id = $2',
+      [req.params.id, req.session.user.id]
+    );
+
+    if (produtoAtual.rows.length === 0) {
+      req.flash('error', 'Produto não encontrado');
+      return res.redirect('/vendedor/produtos');
+    }
+
+    // Buscar informações do plano
+    const planoInfo = await db.query(`
+      SELECT pv.permite_vip, pv.permite_destaque
+      FROM usuarios u
+      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
+      WHERE u.id = $1
+    `, [req.session.user.id]);
+
+    const permiteVip = planoInfo.rows[0]?.permite_vip || false;
+    const permiteDestaque = planoInfo.rows[0]?.permite_destaque || false;
+
+    // Verificar se plano permite VIP
+    if (vip === 'on' && !permiteVip) {
+      req.flash('error', 'Seu plano atual não permite anúncios VIP. Atualize seu plano.');
+      return res.redirect(`/vendedor/produto/${req.params.id}/editar`);
+    }
+    
+    // Verificar se plano permite destaque
+    if (destaque === 'on' && !permiteDestaque) {
+      req.flash('error', 'Seu plano atual não permite produtos em destaque. Atualize seu plano.');
+      return res.redirect(`/vendedor/produto/${req.params.id}/editar`);
+    }
+
+    // Validar dados
+    const validationErrors = validateProductData({ nome, descricao, preco, categoria_id, estoque });
+    if (validationErrors.length > 0) {
+      validationErrors.forEach(error => req.flash('error', error));
+      return res.redirect(`/vendedor/produto/${req.params.id}/editar`);
+    }
+
+    const produto = produtoAtual.rows[0];
+    
+    // Manter imagens existentes se não enviar novas
+    const imagem1 = req.files.imagem1 ? req.files.imagem1[0].filename : produto.imagem1;
+    const imagem2 = req.files.imagem2 ? req.files.imagem2[0].filename : produto.imagem2;
+    const imagem3 = req.files.imagem3 ? req.files.imagem3[0].filename : produto.imagem3;
+
+    await db.query(`
+      UPDATE produtos 
+      SET nome = $1, descricao = $2, preco = $3, preco_promocional = $4, 
+          categoria_id = $5, estoque = $6, imagem1 = $7, imagem2 = $8, imagem3 = $9,
+          destaque = $10, vip = $11, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $12 AND vendedor_id = $13
+    `, [
+      nome.trim(),
+      descricao.trim(),
+      parseFloat(preco),
+      preco_promocional ? parseFloat(preco_promocional) : null,
+      parseInt(categoria_id),
+      parseInt(estoque),
+      imagem1,
+      imagem2,
+      imagem3,
+      destaque === 'on',
+      vip === 'on',
+      req.params.id,
+      req.session.user.id
+    ]);
+
+    req.flash('success', 'Produto atualizado com sucesso!');
+    res.redirect('/vendedor/produtos');
+  } catch (error) {
+    console.error('Erro ao atualizar produto:', error);
+    req.flash('error', 'Erro ao atualizar produto');
+    res.redirect(`/vendedor/produto/${req.params.id}/editar`);
+  }
+});
+
+app.delete('/vendedor/produto/:id', requireVendor, async (req, res) => {
+  try {
+    // Verificar se o produto existe e pertence ao vendedor
+    const produto = await db.query(
+      'SELECT * FROM produtos WHERE id = $1 AND vendedor_id = $2',
+      [req.params.id, req.session.user.id]
+    );
+
+    if (produto.rows.length === 0) {
+      req.flash('error', 'Produto não encontrado');
+      return res.redirect('/vendedor/produtos');
+    }
+
+    // Remover fisicamente as imagens do produto
+    const prod = produto.rows[0];
+    const imagens = [prod.imagem1, prod.imagem2, prod.imagem3].filter(img => img);
+    
+    imagens.forEach(imagem => {
+      const filePath = path.join('public/uploads/produtos/', imagem);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    });
+
+    await db.query(
+      'DELETE FROM produtos WHERE id = $1 AND vendedor_id = $2',
+      [req.params.id, req.session.user.id]
+    );
+
+    req.flash('success', 'Produto removido com sucesso!');
+    res.redirect('/vendedor/produtos');
+  } catch (error) {
+    console.error('Erro ao remover produto:', error);
+    req.flash('error', 'Erro ao remover produto');
+    res.redirect('/vendedor/produtos');
+  }
+});
+
+app.post('/vendedor/produto/:id/alternar-status', requireVendor, async (req, res) => {
+  try {
+    const produto = await db.query(
+      'SELECT ativo FROM produtos WHERE id = $1 AND vendedor_id = $2',
+      [req.params.id, req.session.user.id]
+    );
+
+    if (produto.rows.length === 0) {
+      return res.json({ success: false, message: 'Produto não encontrado' });
+    }
+
+    const novoStatus = !produto.rows[0].ativo;
+    
+    await db.query(
+      'UPDATE produtos SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND vendedor_id = $3',
+      [novoStatus, req.params.id, req.session.user.id]
+    );
+
+    res.json({ 
+      success: true, 
+      message: `Produto ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
+      novoStatus 
+    });
+  } catch (error) {
+    console.error('Erro ao alternar status:', error);
+    res.json({ success: false, message: 'Erro ao alternar status' });
+  }
+});
+
+app.post('/vendedor/produto/:id/solicitar-vip', requireVendor, async (req, res) => {
+  try {
+    // Verificar se plano permite VIP direto
+    const planoInfo = await db.query(`
+      SELECT pv.permite_vip
+      FROM usuarios u
+      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
+      WHERE u.id = $1
+    `, [req.session.user.id]);
+
+    if (planoInfo.rows[0]?.permite_vip) {
+      req.flash('info', 'Seu plano já permite anúncios VIP. Você pode ativar VIP diretamente na edição do produto.');
+      return res.redirect('/vendedor/produtos');
+    }
+
+    // Verificar se já existe solicitação pendente
+    const solicitacaoExistente = await db.query(`
+      SELECT id FROM solicitacoes_vip 
+      WHERE produto_id = $1 AND vendedor_id = $2 AND status = 'pendente'
+    `, [req.params.id, req.session.user.id]);
+
+    if (solicitacaoExistente.rows.length > 0) {
+      req.flash('info', 'Já existe uma solicitação VIP pendente para este produto');
+      return res.redirect('/vendedor/produtos');
+    }
+
+    await db.query(`
+      INSERT INTO solicitacoes_vip (produto_id, vendedor_id, tipo, status)
+      VALUES ($1, $2, 'produto', 'pendente')
+    `, [req.params.id, req.session.user.id]);
+
+    req.flash('success', 'Solicitação de anúncio VIP enviada! Aguarde contato do administrador.');
+    res.redirect('/vendedor/produtos');
+  } catch (error) {
+    console.error('Erro ao solicitar VIP:', error);
+    req.flash('error', 'Erro ao enviar solicitação');
+    res.redirect('/vendedor/produtos');
+  }
+});
+
+// ==================== CONFIGURAÇÃO ESPECIAL DE UPLOAD PARA JOGOS ====================
+// Configuração para aceitar múltiplos campos de arquivos
+const gameUpload = upload.fields([
+  { name: 'capa', maxCount: 1 },
+  { name: 'banner', maxCount: 1 },
+  { name: 'screenshots', maxCount: 4 }
+]);
+
+// ==================== ROTAS QUE FALTAVAM ====================
+
+// 1. CORREÇÃO: Rota para LISTAR jogos no Admin (Resolve o erro ao clicar em Gerir)
+app.get('/admin/jogos', requireAdmin, async (req, res) => {
+  try {
+    const jogos = await db.query('SELECT * FROM jogos ORDER BY created_at DESC');
+    res.render('admin/jogos_lista', { 
+      jogos: jogos.rows,
+      title: 'Gerenciar Jogos - Admin' 
+    });
+  } catch (error) {
+    console.error('Erro ao listar jogos:', error);
+    req.flash('error', 'Erro ao carregar lista de jogos');
+    res.redirect('/admin');
+  }
+});
+
+// 2. NOVA ROTA: Detalhes do Jogo (Página Pública estilo Steam)
+app.get('/game/:id', async (req, res) => {
+  try {
+    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1 AND ativo = true', [req.params.id]);
+    
+    if (jogo.rows.length === 0) {
+      return res.status(404).render('404', { layout: false });
+    }
+
+    // Buscar jogos similares (mesmo gênero)
+    const similares = await db.query(
+      'SELECT * FROM jogos WHERE genero = $1 AND id != $2 AND ativo = true LIMIT 4',
+      [jogo.rows[0].genero, req.params.id]
+    );
+
+    res.render('game_detalhes', {
+      title: `${jogo.rows[0].titulo} - Kuanda Games`,
+      jogo: jogo.rows[0],
+      similares: similares.rows,
+      user: req.session.user || null
+    });
+  } catch (error) {
+    console.error('Erro ao carregar jogo:', error);
+    res.redirect('/games');
+  }
+});
+
+// ==================== ROTA PÚBLICA: LOJA DE JOGOS (FRONTEND) ====================
+app.get('/games', async (req, res) => {
+  try {
+    const { genero, busca, ordenar } = req.query;
+    
+    let query = `
+      SELECT *, 
+      (vendas_count + downloads_count) as popularidade 
+      FROM jogos WHERE ativo = true
+    `;
+    const params = [];
+    let paramCount = 0;
+
+    if (genero) {
+      paramCount++;
+      query += ` AND genero = $${paramCount}`;
+      params.push(genero);
+    }
+
+    if (busca) {
+      paramCount++;
+      query += ` AND titulo ILIKE $${paramCount}`;
+      params.push(`%${busca}%`);
+    }
+
+    // Ordenação
+    if (ordenar === 'novos') query += ' ORDER BY created_at DESC';
+    else if (ordenar === 'popular') query += ' ORDER BY popularidade DESC';
+    else if (ordenar === 'preco_asc') query += ' ORDER BY preco ASC';
+    else query += ' ORDER BY created_at DESC'; // Padrão
+
+    const jogos = await db.query(query, params);
+
+    // Buscar "Mais Vendidos/Baixados" para a Sidebar
+    const topJogos = await db.query('SELECT * FROM jogos WHERE ativo = true ORDER BY (vendas_count + downloads_count) DESC LIMIT 5');
+
+    // Buscar Gêneros disponíveis
+    const generos = await db.query('SELECT DISTINCT genero FROM jogos WHERE genero IS NOT NULL');
+
+    res.render('games', {
+      title: 'Kuanda Games - Loja Oficial',
+      jogos: jogos.rows,
+      topJogos: topJogos.rows,
+      generos: generos.rows,
+      filtros: { genero, busca, ordenar },
+      user: req.session.user || null
+    });
+  } catch (error) {
+    console.error('Erro ao carregar games:', error);
+    res.redirect('/');
+  }
+});
+
+// ==================== ROTAS ADMIN: GERENCIAR JOGOS ====================
+
+// Form Novo Jogo
+app.get('/admin/jogos/novo', requireAdmin, (req, res) => {
+  res.render('admin/jogo_form', { jogo: null, action: '/admin/jogos' });
+});
+
+// Criar Jogo (POST)
+app.post('/admin/jogos', requireAdmin, gameUpload, async (req, res) => {
+  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
+  
+  try {
+    if (!req.files.capa) throw new Error('A capa é obrigatória');
+
+    const capa = req.files.capa[0].filename;
+    const banner = req.files.banner ? req.files.banner[0].filename : null;
+    // Processar screenshots
+    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : [];
+
+    await db.query(`
+      INSERT INTO jogos 
+      (titulo, capa, banner, screenshots, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      titulo, capa, banner, screenshots, 
+      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
+      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on'
+    ]);
+
+    req.flash('success', 'Jogo publicado com sucesso!');
+    res.redirect('/admin/jogos');
+  } catch (error) {
+    console.error(error);
+    req.flash('error', 'Erro ao cadastrar jogo: ' + error.message);
+    res.redirect('/admin/jogos/novo');
+  }
+});
+
+// Form Editar Jogo
+app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
+  try {
+    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
+    if (jogo.rows.length === 0) return res.redirect('/admin/jogos');
+    
+    res.render('admin/jogo_form', { 
+      jogo: jogo.rows[0], 
+      action: `/admin/jogos/${req.params.id}?_method=PUT` 
+    });
+  } catch (e) { res.redirect('/admin/jogos'); }
+});
+
+// Atualizar Jogo (PUT)
+app.put('/admin/jogos/:id', requireAdmin, gameUpload, async (req, res) => {
+  const { titulo, preco, plataforma, genero, link_download, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo } = req.body;
+  
+  try {
+    const jogoAtual = await db.query('SELECT capa, banner, screenshots FROM jogos WHERE id = $1', [req.params.id]);
+    const current = jogoAtual.rows[0];
+
+    // Manter imagens antigas se não enviar novas
+    const capa = req.files.capa ? req.files.capa[0].filename : current.capa;
+    const banner = req.files.banner ? req.files.banner[0].filename : current.banner;
+    
+    // Screenshots: Se enviar novas, substitui. Se não, mantém.
+    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : current.screenshots;
+
+    await db.query(`
+      UPDATE jogos SET 
+      titulo=$1, capa=$2, banner=$3, screenshots=$4, preco=$5, plataforma=$6, genero=$7, 
+      link_download=$8, trailer_url=$9, descricao=$10, requisitos=$11, desenvolvedor=$12, classificacao=$13, ativo=$14
+      WHERE id=$15
+    `, [
+      titulo, capa, banner, screenshots, 
+      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
+      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on', 
+      req.params.id
+    ]);
+
+    req.flash('success', 'Jogo atualizado!');
+    res.redirect('/admin/jogos');
+  } catch (error) {
+    console.error(error);
+    req.flash('error', 'Erro ao atualizar');
+    res.redirect('/admin/jogos');
+  }
+});
+
+// Deletar Jogo (DELETE)
+app.delete('/admin/jogos/:id', requireAdmin, async (req, res) => {
+  await db.query('DELETE FROM jogos WHERE id = $1', [req.params.id]);
+  req.flash('success', 'Jogo removido');
+  res.redirect('/admin/jogos');
+});
+
+// ==================== PAINEL ADMINISTRATIVO ====================
 app.get('/admin', requireAdmin, async (req, res) => {
   try {
-    console.log(`👑 Carregando painel administrativo para admin ${req.session.user.id}...`);
-    
     const [stats, vendedoresRecentes, produtosRecentes, solicitacoesPendentes, planosStats] = await Promise.all([
       db.query(`
         SELECT 
@@ -2510,9 +2105,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
           (SELECT COUNT(*) FROM produtos WHERE destaque = true) as produtos_destaque,
           (SELECT COUNT(*) FROM planos_vendedor) as total_planos,
           (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND plano_id IS NOT NULL) as vendedores_com_plano,
-          (SELECT COUNT(*) FROM jogos WHERE ativo = true) as total_jogos,
-          (SELECT COUNT(*) FROM vendas WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as vendas_30dias,
-          (SELECT SUM(valor_total) FROM vendas WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as receita_30dias
+          (SELECT COUNT(*) FROM jogos WHERE ativo = true) as total_jogos
       `),
       db.query(`
         SELECT u.*, COUNT(p.id) as total_produtos, pv.nome as plano_nome
@@ -2545,52 +2138,16 @@ app.get('/admin', requireAdmin, async (req, res) => {
       `)
     ]);
 
-    const statsData = stats.rows[0] || {};
-    const statsProcessed = {
-      total_vendedores: parseInt(statsData.total_vendedores) || 0,
-      total_clientes: parseInt(statsData.total_clientes) || 0,
-      total_produtos: parseInt(statsData.total_produtos) || 0,
-      solicitacoes_pendentes: parseInt(statsData.solicitacoes_pendentes) || 0,
-      banners_ativos: parseInt(statsData.banners_ativos) || 0,
-      filmes_ativos: parseInt(statsData.filmes_ativos) || 0,
-      total_seguidores: parseInt(statsData.total_seguidores) || 0,
-      avaliacoes_recentes: parseInt(statsData.avaliacoes_recentes) || 0,
-      produtos_vip: parseInt(statsData.produtos_vip) || 0,
-      produtos_destaque: parseInt(statsData.produtos_destaque) || 0,
-      total_planos: parseInt(statsData.total_planos) || 0,
-      vendedores_com_plano: parseInt(statsData.vendedores_com_plano) || 0,
-      total_jogos: parseInt(statsData.total_jogos) || 0,
-      vendas_30dias: parseInt(statsData.vendas_30dias) || 0,
-      receita_30dias: parseFloat(statsData.receita_30dias) || 0
-    };
-
-    const vendedoresRecentesProcessados = vendedoresRecentes.rows.map(vendedor => ({
-      ...vendedor,
-      foto_perfil_url: vendedor.foto_perfil_id ? `/imagem/${vendedor.foto_perfil_id}` : '/images/default-avatar.png'
-    }));
-
-    const produtosRecentesProcessados = produtosRecentes.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png'
-    }));
-
-    console.log(`✅ Painel administrativo carregado`);
-    console.log(`   👥 Vendedores: ${statsProcessed.total_vendedores}, Clientes: ${statsProcessed.total_clientes}`);
-    console.log(`   📦 Produtos: ${statsProcessed.total_produtos} total, ${statsProcessed.produtos_vip} VIP`);
-    console.log(`   💰 Receita 30 dias: R$ ${statsProcessed.receita_30dias.toFixed(2)}`);
-
     res.render('admin/dashboard', {
-      stats: statsProcessed,
-      vendedoresRecentes: vendedoresRecentesProcessados,
-      produtosRecentes: produtosRecentesProcessados,
-      solicitacoesPendentes: solicitacoesPendentes.rows[0]?.total || 0,
+      stats: stats.rows[0],
+      vendedoresRecentes: vendedoresRecentes.rows,
+      produtosRecentes: produtosRecentes.rows,
+      solicitacoesPendentes: solicitacoesPendentes.rows[0].total,
       planosStats: planosStats.rows,
       title: 'Painel Administrativo - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO NO DASHBOARD ADMIN:', error.message);
-    console.error('Stack trace:', error.stack);
-    
+    console.error('Erro no dashboard admin:', error);
     res.render('admin/dashboard', { 
       stats: {},
       vendedoresRecentes: [],
@@ -2602,429 +2159,545 @@ app.get('/admin', requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== GERENCIAMENTO DE USUÁRIOS (ADMIN) ====================
-app.get('/admin/usuarios', requireAdmin, async (req, res) => {
+app.get('/admin/vendedores', requireAdmin, async (req, res) => {
   try {
-    const { tipo, busca, status } = req.query;
-    console.log(`👥 Carregando usuários - Tipo: ${tipo || 'Todos'}, Busca: ${busca || 'Nenhuma'}, Status: ${status || 'Todos'}`);
-    
-    let query = `
-      SELECT u.*, 
-             COUNT(p.id) as total_produtos,
-             pv.nome as plano_nome,
-             pv.limite_produtos as plano_limite
-      FROM usuarios u
-      LEFT JOIN produtos p ON u.id = p.vendedor_id
-      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
-      WHERE 1=1
-    `;
-    
-    const params = [];
-    let paramCount = 0;
-
-    if (tipo && tipo !== 'todos') {
-      paramCount++;
-      query += ` AND u.tipo = $${paramCount}`;
-      params.push(tipo);
-    }
-
-    if (busca) {
-      paramCount++;
-      query += ` AND (
-        u.nome ILIKE $${paramCount} OR 
-        u.email ILIKE $${paramCount} OR 
-        u.nome_loja ILIKE $${paramCount} OR
-        u.telefone ILIKE $${paramCount}
-      )`;
-      params.push(`%${busca}%`);
-    }
-
-    if (status === 'ativos') {
-      query += ` AND u.loja_ativa = true`;
-    } else if (status === 'inativos') {
-      query += ` AND u.loja_ativa = false`;
-    } else if (status === 'bloqueados') {
-      query += ` AND u.bloqueado = true`;
-    }
-
-    query += ` GROUP BY u.id, pv.nome, pv.limite_produtos ORDER BY u.created_at DESC`;
-
-    const usuarios = await db.query(query, params);
-    
-    const usuariosProcessados = usuarios.rows.map(usuario => ({
-      ...usuario,
-      foto_perfil_url: usuario.foto_perfil_id ? `/imagem/${usuario.foto_perfil_id}` : '/images/default-avatar.png',
-      total_produtos: parseInt(usuario.total_produtos) || 0
-    }));
-
-    const planos = await db.query('SELECT * FROM planos_vendedor ORDER BY limite_produtos');
-
-    console.log(`✅ ${usuariosProcessados.length} usuários carregados`);
-
-    res.render('admin/usuarios', {
-      usuarios: usuariosProcessados,
-      planos: planos.rows,
-      filtros: { tipo: tipo || 'todos', busca: busca || '', status: status || 'todos' },
-      title: 'Gerenciar Usuários - KuandaShop'
-    });
-  } catch (error) {
-    console.error('❌ ERRO AO CARREGAR USUÁRIOS:', error.message);
-    res.render('admin/usuarios', {
-      usuarios: [],
-      planos: [],
-      filtros: { tipo: 'todos', busca: '', status: 'todos' },
-      title: 'Gerenciar Usuários'
-    });
-  }
-});
-
-app.post('/admin/usuario/:id/toggle-status', requireAdmin, async (req, res) => {
-  try {
-    const userId = req.params.id;
-    const { tipo } = req.query;
-    
-    console.log(`🔄 Alternando status do usuário ${userId} - Tipo: ${tipo}`);
-    
-    const usuario = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
-    
-    if (usuario.rows.length === 0) {
-      return res.json({ success: false, message: 'Usuário não encontrado' });
-    }
-
-    let updateQuery = '';
-    let updateParams = [];
-    let novoStatus = null;
-    let mensagem = '';
-
-    if (tipo === 'loja') {
-      novoStatus = !usuario.rows[0].loja_ativa;
-      updateQuery = 'UPDATE usuarios SET loja_ativa = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2';
-      updateParams = [novoStatus, userId];
-      mensagem = `Loja ${novoStatus ? 'ativada' : 'desativada'} com sucesso!`;
-      console.log(`✅ Status da loja alterado para: ${novoStatus ? 'Ativa' : 'Inativa'}`);
-    } else if (tipo === 'bloqueio') {
-      novoStatus = !usuario.rows[0].bloqueado;
-      updateQuery = 'UPDATE usuarios SET bloqueado = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2';
-      updateParams = [novoStatus, userId];
-      mensagem = `Usuário ${novoStatus ? 'bloqueado' : 'desbloqueado'} com sucesso!`;
-      console.log(`✅ Status de bloqueio alterado para: ${novoStatus ? 'Bloqueado' : 'Desbloqueado'}`);
-    } else {
-      return res.json({ success: false, message: 'Tipo de operação inválido' });
-    }
-
-    await db.query(updateQuery, updateParams);
-
-    res.json({ 
-      success: true, 
-      message: mensagem,
-      novoStatus 
-    });
-  } catch (error) {
-    console.error('❌ ERRO AO ALTERNAR STATUS:', error.message);
-    res.json({ success: false, message: 'Erro ao alternar status' });
-  }
-});
-
-// ==================== GERENCIAMENTO DE BANNERS (ADMIN) ====================
-app.get('/admin/banners', requireAdmin, async (req, res) => {
-  try {
-    console.log(`🖼️ Carregando banners...`);
-    
-    const banners = await db.query(`
-      SELECT b.*, i.id as imagem_id 
-      FROM banners b 
-      LEFT JOIN imagens i ON b.imagem_id = i.id 
-      ORDER BY b.ordem, b.created_at DESC
-    `);
-    
-    const bannersProcessados = banners.rows.map(banner => ({
-      ...banner,
-      imagem_url: banner.imagem_id ? `/imagem/${banner.imagem_id}` : '/images/banner-placeholder.jpg'
-    }));
-    
-    console.log(`✅ ${bannersProcessados.length} banners carregados`);
-    
-    res.render('admin/banners', {
-      banners: bannersProcessados,
-      title: 'Gerenciar Banners - KuandaShop'
-    });
-  } catch (error) {
-    console.error('❌ ERRO AO CARREGAR BANNERS:', error.message);
-    res.render('admin/banners', {
-      banners: [],
-      title: 'Gerenciar Banners'
-    });
-  }
-});
-
-app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, res) => {
-  const { titulo, link, ordem, ativo } = req.body;
-  
-  try {
-    console.log(`➕ Criando novo banner: ${titulo || 'Sem título'}`);
-    
-    if (!req.file) {
-      req.flash('error', 'É necessário enviar uma imagem para o banner');
-      return res.redirect('/admin/banners/novo');
-    }
-
-    console.log(`📸 Imagem recebida: ${req.file.filename} (${req.file.size} bytes)`);
-
-    const bannerResult = await db.query(`
-      INSERT INTO banners (titulo, link, ordem, ativo, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id
-    `, [
-      titulo ? titulo.trim() : null,
-      link ? link.trim() : null,
-      ordem ? parseInt(ordem) : 0,
-      ativo === 'on'
-    ]);
-
-    const bannerId = bannerResult.rows[0].id;
-    console.log(`✅ Banner criado com ID: ${bannerId}`);
-
-    let imagemId = null;
-    try {
-      const imagemSalva = await salvarImagemBanco(req.file, 'banner', bannerId, req.session.user.id);
-      imagemId = imagemSalva ? imagemSalva.id : null;
-      
-      console.log(`✅ Imagem salva com ID: ${imagemId}`);
-      
-      if (imagemId) {
-        await db.query(
-          'UPDATE banners SET imagem_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-          [imagemId, bannerId]
-        );
-        console.log(`✅ Banner ${bannerId} atualizado com imagem ${imagemId}`);
-      }
-    } catch (imageError) {
-      console.error('❌ ERRO AO SALVAR IMAGEM DO BANNER:', imageError.message);
-      await db.query('DELETE FROM banners WHERE id = $1', [bannerId]);
-      console.log(`🗑️ Banner ${bannerId} removido devido a erro na imagem`);
-      req.flash('error', 'Erro ao processar imagem: ' + imageError.message);
-      return res.redirect('/admin/banners/novo');
-    }
-    
-    req.flash('success', 'Banner criado com sucesso!');
-    console.log(`🎉 Banner ${bannerId} criado com sucesso`);
-    res.redirect('/admin/banners');
-  } catch (error) {
-    console.error('❌ ERRO AO CRIAR BANNER:', error.message);
-    console.error('Stack trace:', error.stack);
-    
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-        console.log(`🗑️ Arquivo temporário removido: ${req.file.path}`);
-      } catch (unlinkError) {
-        console.error('Erro ao remover arquivo temporário:', unlinkError.message);
-      }
-    }
-    
-    req.flash('error', 'Erro ao criar banner: ' + error.message);
-    res.redirect('/admin/banners/novo');
-  }
-});
-
-// ==================== ROTAS ADICIONAIS COMPLETAS ====================
-
-// Rota de lojas
-app.get('/lojas', async (req, res) => {
-  try {
-    console.log(`🏪 Carregando lojas...`);
-    
-    const lojas = await db.query(`
+    const vendedores = await db.query(`
       SELECT u.*, 
              COUNT(p.id) as total_produtos,
              COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-             COUNT(DISTINCT a.id) as total_avaliacoes,
-             COUNT(DISTINCT s.id) as total_seguidores
+             COUNT(DISTINCT s.id) as total_seguidores,
+             pv.nome as plano_nome,
+             pv.limite_produtos as plano_limite,
+             pv.preco_mensal,
+             pv.permite_vip,
+             pv.permite_destaque
       FROM usuarios u
-      LEFT JOIN produtos p ON u.id = p.vendedor_id AND p.ativo = true
+      LEFT JOIN produtos p ON u.id = p.vendedor_id
       LEFT JOIN avaliacoes a ON p.id = a.produto_id
       LEFT JOIN seguidores s ON u.id = s.loja_id
-      WHERE u.tipo = 'vendedor' AND u.loja_ativa = true
-      GROUP BY u.id
+      LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id
+      WHERE u.tipo = 'vendedor'
+      GROUP BY u.id, pv.nome, pv.limite_produtos, pv.preco_mensal, pv.permite_vip, pv.permite_destaque
       ORDER BY u.created_at DESC
     `);
 
-    const lojasProcessadas = lojas.rows.map(loja => ({
-      ...loja,
-      foto_perfil_url: loja.foto_perfil_id ? `/imagem/${loja.foto_perfil_id}` : '/images/default-avatar.png',
-      total_produtos: parseInt(loja.total_produtos) || 0,
-      media_classificacao: parseFloat(loja.media_classificacao) || 0,
-      total_avaliacoes: parseInt(loja.total_avaliacoes) || 0,
-      total_seguidores: parseInt(loja.total_seguidores) || 0
-    }));
+    const planos = await db.query(`
+      SELECT * FROM planos_vendedor ORDER BY limite_produtos
+    `);
 
-    console.log(`✅ ${lojasProcessadas.length} lojas carregadas`);
-    
-    res.render('lojas/lista', {
-      lojas: lojasProcessadas,
-      title: 'Lojas - KuandaShop'
+    res.render('admin/vendedores', {
+      vendedores: vendedores.rows,
+      planos: planos.rows,
+      title: 'Gerenciar Vendedores - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR LOJAS:', error.message);
-    res.render('lojas/lista', { 
-      lojas: [],
-      title: 'Lojas'
+    console.error('Erro ao carregar vendedores:', error);
+    res.render('admin/vendedores', { 
+      vendedores: [],
+      planos: [],
+      title: 'Gerenciar Vendedores'
     });
   }
 });
 
-// Rota de detalhes da loja
-app.get('/loja/:id', async (req, res) => {
-  const { categoria, busca, ordenar } = req.query;
-  const lojaId = req.params.id;
+app.post('/admin/vendedor/:id/toggle-loja', requireAdmin, async (req, res) => {
+  try {
+    const vendedor = await db.query(
+      'SELECT loja_ativa FROM usuarios WHERE id = $1 AND tipo = $2',
+      [req.params.id, 'vendedor']
+    );
+    
+    if (vendedor.rows.length === 0) {
+      req.flash('error', 'Vendedor não encontrado');
+      return res.redirect('/admin/vendedores');
+    }
+    
+    const novoStatus = !vendedor.rows[0].loja_ativa;
+
+    await db.query(
+      'UPDATE usuarios SET loja_ativa = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novoStatus, req.params.id]
+    );
+
+    req.flash('success', `Loja ${novoStatus ? 'ativada' : 'desativada'} com sucesso!`);
+    res.redirect('/admin/vendedores');
+  } catch (error) {
+    console.error('Erro ao alterar status da loja:', error);
+    req.flash('error', 'Erro ao alterar status da loja');
+    res.redirect('/admin/vendedores');
+  }
+});
+
+// ==================== GERENCIAMENTO DE PLANOS ====================
+app.get('/admin/planos', requireAdmin, async (req, res) => {
+  try {
+    // Buscar planos com contagem de vendedores
+    const planos = await db.query(`
+      SELECT pv.*, 
+             COUNT(u.id) as total_vendedores
+      FROM planos_vendedor pv
+      LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
+      GROUP BY pv.id
+      ORDER BY pv.limite_produtos
+    `);
+
+    // Buscar vendedores agrupados por plano
+    const vendedoresPorPlano = await db.query(`
+      SELECT 
+        pv.nome as plano_nome,
+        pv.id as plano_id,
+        json_agg(
+          json_build_object(
+            'id', u.id,
+            'nome', u.nome,
+            'nome_loja', u.nome_loja,
+            'email', u.email,
+            'telefone', u.telefone,
+            'foto_perfil', u.foto_perfil,
+            'loja_ativa', u.loja_ativa,
+            'created_at', u.created_at,
+            'plano_id', u.plano_id,
+            'limite_produtos', u.limite_produtos,
+            'total_produtos', (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id)
+          )
+        ) as vendedores
+      FROM planos_vendedor pv
+      LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
+      WHERE u.id IS NOT NULL
+      GROUP BY pv.id, pv.nome
+      ORDER BY pv.limite_produtos
+    `);
+
+    // Buscar vendedores sem plano
+    const vendedoresSemPlano = await db.query(`
+      SELECT 
+        u.*,
+        (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id) as total_produtos
+      FROM usuarios u
+      WHERE u.tipo = 'vendedor' 
+        AND (u.plano_id IS NULL OR u.plano_id = 0)
+      ORDER BY u.created_at DESC
+    `);
+
+    // Estatísticas
+    const statsResult = await db.query(`
+      SELECT 
+        (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND loja_ativa = true) as vendedores_ativos,
+        (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND plano_id IS NOT NULL AND plano_id != 0) as vendedores_com_plano,
+        (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)) as vendedores_sem_plano,
+        (SELECT COUNT(*) FROM planos_vendedor) as total_planos
+    `);
+
+    // Garantir que stats sempre tenha valores
+    const stats = statsResult.rows[0] || {
+      vendedores_ativos: 0,
+      vendedores_com_plano: 0,
+      vendedores_sem_plano: vendedoresSemPlano.rows.length,
+      total_planos: planos.rows.length
+    };
+
+    res.render('admin/planos', {
+      planos: planos.rows,
+      vendedoresPorPlano: vendedoresPorPlano.rows,
+      vendedoresSemPlano: vendedoresSemPlano.rows,
+      stats: stats,
+      title: 'Gerenciar Planos - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar planos:', error);
+    
+    // Dados padrão em caso de erro
+    res.render('admin/planos', { 
+      planos: [],
+      vendedoresPorPlano: [],
+      vendedoresSemPlano: [],
+      stats: {
+        vendedores_ativos: 0,
+        vendedores_com_plano: 0,
+        vendedores_sem_plano: 0,
+        total_planos: 0
+      },
+      title: 'Gerenciar Planos de Vendedores'
+    });
+  }
+});
+
+app.get('/admin/planos/novo', requireAdmin, (req, res) => {
+  res.render('admin/plano-form', {
+    plano: null,
+    action: '/admin/planos',
+    title: 'Novo Plano - KuandaShop'
+  });
+});
+
+app.post('/admin/planos', requireAdmin, async (req, res) => {
+  const { nome, limite_produtos, preco_mensal, permite_vip, permite_destaque } = req.body;
   
   try {
-    console.log(`🏪 Carregando loja ${lojaId}...`);
-    
-    const loja = await db.query(`
-      SELECT u.*, 
-             COUNT(DISTINCT p.id) as total_produtos,
-             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-             COUNT(DISTINCT a.id) as total_avaliacoes,
-             COUNT(DISTINCT s.id) as total_seguidores
-      FROM usuarios u
-      LEFT JOIN produtos p ON u.id = p.vendedor_id AND p.ativo = true
-      LEFT JOIN avaliacoes a ON p.id = a.produto_id
-      LEFT JOIN seguidores s ON u.id = s.loja_id
-      WHERE u.id = $1 AND u.tipo = 'vendedor' AND u.loja_ativa = true
-      GROUP BY u.id
-    `, [lojaId]);
-
-    if (loja.rows.length === 0) {
-      req.flash('error', 'Loja não encontrada');
-      return res.redirect('/lojas');
+    if (!nome || nome.trim().length < 2) {
+      req.flash('error', 'Nome do plano deve ter pelo menos 2 caracteres');
+      return res.redirect('/admin/planos/novo');
     }
 
-    const lojaData = loja.rows[0];
-    lojaData.foto_perfil_url = lojaData.foto_perfil_id ? `/imagem/${lojaData.foto_perfil_id}` : '/images/default-avatar.png';
-    lojaData.total_produtos = parseInt(lojaData.total_produtos) || 0;
-    lojaData.media_classificacao = parseFloat(lojaData.media_classificacao) || 0;
-    lojaData.total_avaliacoes = parseInt(lojaData.total_avaliacoes) || 0;
-    lojaData.total_seguidores = parseInt(lojaData.total_seguidores) || 0;
-
-    let produtosQuery = `
-      SELECT p.*, 
-             COALESCE(AVG(a.classificacao), 0) as media_classificacao,
-             COUNT(a.id) as total_avaliacoes,
-             c.nome as categoria_nome
-      FROM produtos p 
-      LEFT JOIN avaliacoes a ON p.id = a.produto_id
-      LEFT JOIN categorias c ON p.categoria_id = c.id
-      WHERE p.vendedor_id = $1 AND p.ativo = true
-    `;
-    
-    const params = [lojaId];
-    let paramCount = 1;
-
-    if (categoria) {
-      paramCount++;
-      produtosQuery += ` AND p.categoria_id = $${paramCount}`;
-      params.push(categoria);
+    if (!limite_produtos || isNaN(limite_produtos) || parseInt(limite_produtos) < 1) {
+      req.flash('error', 'Limite de produtos deve ser um número positivo');
+      return res.redirect('/admin/planos/novo');
     }
 
-    if (busca) {
-      paramCount++;
-      produtosQuery += ` AND (p.nome ILIKE $${paramCount} OR p.descricao ILIKE $${paramCount})`;
-      params.push(`%${busca}%`);
-    }
-
-    produtosQuery += ' GROUP BY p.id, c.nome';
-
-    switch (ordenar) {
-      case 'preco_asc':
-        produtosQuery += ' ORDER BY COALESCE(p.preco_promocional, p.preco) ASC';
-        break;
-      case 'preco_desc':
-        produtosQuery += ' ORDER BY COALESCE(p.preco_promocional, p.preco) DESC';
-        break;
-      case 'nome':
-        produtosQuery += ' ORDER BY p.nome ASC';
-        break;
-      case 'avaliacao':
-        produtosQuery += ' ORDER BY media_classificacao DESC NULLS LAST';
-        break;
-      default:
-        produtosQuery += ' ORDER BY p.created_at DESC';
-    }
-
-    const [produtosResult, categoriasList] = await Promise.all([
-      db.query(produtosQuery, params),
-      db.query(`
-        SELECT DISTINCT c.* 
-        FROM categorias c
-        JOIN produtos p ON c.id = p.categoria_id
-        WHERE p.vendedor_id = $1 AND p.ativo = true
-        ORDER BY c.nome
-      `, [lojaId])
+    await db.query(`
+      INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque, created_at)
+      VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+    `, [
+      nome.trim(),
+      parseInt(limite_produtos),
+      preco_mensal ? parseFloat(preco_mensal) : null,
+      permite_vip === 'on',
+      permite_destaque === 'on'
     ]);
-
-    const produtos = produtosResult.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null,
-      estoque: parseInt(produto.estoque) || 0,
-      media_classificacao: parseFloat(produto.media_classificacao) || 0,
-      total_avaliacoes: parseInt(produto.total_avaliacoes) || 0
-    }));
-
-    let seguindo = false;
-    if (req.session.user) {
-      const segueResult = await db.query(
-        'SELECT id FROM seguidores WHERE usuario_id = $1 AND loja_id = $2 LIMIT 1',
-        [req.session.user.id, lojaId]
-      );
-      seguindo = segueResult.rows.length > 0;
-    }
-
-    console.log(`✅ Loja ${lojaId} carregada com ${produtos.length} produtos`);
-
-    res.render('lojas/detalhes', {
-      loja: lojaData,
-      produtos,
-      categorias: categoriasList.rows,
-      filtros: { categoria: categoria || '', busca: busca || '', ordenar: ordenar || 'novos' },
-      seguindo,
-      title: `${lojaData.nome_loja || lojaData.nome} - Loja`
-    });
+    
+    req.flash('success', 'Plano criado com sucesso!');
+    res.redirect('/admin/planos');
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR LOJA:', error.message);
-    req.flash('error', 'Erro ao carregar loja');
-    res.redirect('/lojas');
+    console.error('Erro ao criar plano:', error);
+    req.flash('error', 'Erro ao criar plano');
+    res.redirect('/admin/planos/novo');
   }
 });
 
-// Rota de categorias pública
+app.get('/admin/planos/:id/editar', requireAdmin, async (req, res) => {
+  try {
+    const plano = await db.query('SELECT * FROM planos_vendedor WHERE id = $1', [req.params.id]);
+    
+    if (plano.rows.length === 0) {
+      req.flash('error', 'Plano não encontrado');
+      return res.redirect('/admin/planos');
+    }
+    
+    res.render('admin/plano-form', {
+      plano: plano.rows[0],
+      action: `/admin/planos/${req.params.id}?_method=PUT`,
+      title: 'Editar Plano - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar plano:', error);
+    req.flash('error', 'Erro ao carregar plano');
+    res.redirect('/admin/planos');
+  }
+});
+
+app.put('/admin/planos/:id', requireAdmin, async (req, res) => {
+  const { nome, limite_produtos, preco_mensal, permite_vip, permite_destaque } = req.body;
+  
+  try {
+    if (!nome || nome.trim().length < 2) {
+      req.flash('error', 'Nome do plano deve ter pelo menos 2 caracteres');
+      return res.redirect(`/admin/planos/${req.params.id}/editar`);
+    }
+
+    if (!limite_produtos || isNaN(limite_produtos) || parseInt(limite_produtos) < 1) {
+      req.flash('error', 'Limite de produtos deve ser um número positivo');
+      return res.redirect(`/admin/planos/${req.params.id}/editar`);
+    }
+
+    await db.query(`
+      UPDATE planos_vendedor 
+      SET nome = $1, limite_produtos = $2, preco_mensal = $3, 
+          permite_vip = $4, permite_destaque = $5
+      WHERE id = $6
+    `, [
+      nome.trim(),
+      parseInt(limite_produtos),
+      preco_mensal ? parseFloat(preco_mensal) : null,
+      permite_vip === 'on',
+      permite_destaque === 'on',
+      req.params.id
+    ]);
+    
+    req.flash('success', 'Plano atualizado com sucesso!');
+    res.redirect('/admin/planos');
+  } catch (error) {
+    console.error('Erro ao atualizar plano:', error);
+    req.flash('error', 'Erro ao atualizar plano');
+    res.redirect(`/admin/planos/${req.params.id}/editar`);
+  }
+});
+
+app.delete('/admin/planos/:id', requireAdmin, async (req, res) => {
+  try {
+    // Verificar se há vendedores usando este plano
+    const vendedores = await db.query(
+      'SELECT COUNT(*) as total FROM usuarios WHERE plano_id = $1 AND tipo = $2',
+      [req.params.id, 'vendedor']
+    );
+    
+    if (parseInt(vendedores.rows[0].total) > 0) {
+      req.flash('error', 'Não é possível remover um plano que está sendo usado por vendedores. Transfira os vendedores para outro plano primeiro.');
+      return res.redirect('/admin/planos');
+    }
+    
+    await db.query('DELETE FROM planos_vendedor WHERE id = $1', [req.params.id]);
+    
+    req.flash('success', 'Plano removido com sucesso!');
+    res.redirect('/admin/planos');
+  } catch (error) {
+    console.error('Erro ao remover plano:', error);
+    req.flash('error', 'Erro ao remover plano');
+    res.redirect('/admin/planos');
+  }
+});
+
+// ==================== ROTAS PARA ATRIBUIR/MUDAR PLANOS DE VENDEDORES ====================
+
+// Rota para atribuir plano a um vendedor específico
+app.post('/admin/vendedor/atribuir-plano', requireAdmin, async (req, res) => {
+  const { vendedor_id, plano_id, limite_produtos } = req.body;
+  
+  try {
+    // Validar dados
+    if (!vendedor_id || !plano_id) {
+      req.flash('error', 'Vendedor e plano são obrigatórios');
+      return res.redirect('/admin/planos#sem-plano');
+    }
+
+    // Verificar se vendedor existe
+    const vendedor = await db.query(
+      'SELECT id FROM usuarios WHERE id = $1 AND tipo = $2',
+      [vendedor_id, 'vendedor']
+    );
+    
+    if (vendedor.rows.length === 0) {
+      req.flash('error', 'Vendedor não encontrado');
+      return res.redirect('/admin/planos#sem-plano');
+    }
+
+    // Verificar se plano existe
+    const plano = await db.query(
+      'SELECT * FROM planos_vendedor WHERE id = $1',
+      [plano_id]
+    );
+    
+    if (plano.rows.length === 0) {
+      req.flash('error', 'Plano não encontrado');
+      return res.redirect('/admin/planos#sem-plano');
+    }
+
+    // Se não especificou limite, usar o padrão do plano
+    let limiteFinal = parseInt(limite_produtos) || plano.rows[0].limite_produtos;
+    
+    // Atualizar plano do vendedor
+    await db.query(`
+      UPDATE usuarios 
+      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+    `, [parseInt(plano_id), limiteFinal, vendedor_id]);
+
+    req.flash('success', 'Plano atribuído com sucesso!');
+    res.redirect('/admin/planos#sem-plano');
+  } catch (error) {
+    console.error('Erro ao atribuir plano:', error);
+    req.flash('error', 'Erro ao atribuir plano: ' + error.message);
+    res.redirect('/admin/planos#sem-plano');
+  }
+});
+
+// Rota para mudar plano de um vendedor
+app.post('/admin/vendedor/mudar-plano', requireAdmin, async (req, res) => {
+  const { vendedor_id, novo_plano_id } = req.body;
+  
+  try {
+    // Validar dados
+    if (!vendedor_id || !novo_plano_id) {
+      req.flash('error', 'Vendedor e novo plano são obrigatórios');
+      return res.redirect('/admin/planos#vendedores');
+    }
+
+    // Verificar se vendedor existe
+    const vendedor = await db.query(
+      'SELECT * FROM usuarios WHERE id = $1 AND tipo = $2',
+      [vendedor_id, 'vendedor']
+    );
+    
+    if (vendedor.rows.length === 0) {
+      req.flash('error', 'Vendedor não encontrado');
+      return res.redirect('/admin/planos#vendedores');
+    }
+
+    // Verificar se novo plano existe
+    const novoPlano = await db.query(
+      'SELECT * FROM planos_vendedor WHERE id = $1',
+      [novo_plano_id]
+    );
+    
+    if (novoPlano.rows.length === 0) {
+      req.flash('error', 'Novo plano não encontrado');
+      return res.redirect('/admin/planos#vendedores');
+    }
+
+    // Verificar se vendedor já está no limite
+    const produtosVendedor = await db.query(
+      'SELECT COUNT(*) as total FROM produtos WHERE vendedor_id = $1',
+      [vendedor_id]
+    );
+    
+    const totalProdutos = parseInt(produtosVendedor.rows[0].total);
+    const limiteNovo = novoPlano.rows[0].limite_produtos;
+    
+    if (totalProdutos > limiteNovo) {
+      req.flash('warning', `Atenção: Vendedor tem ${totalProdutos} produtos, mas novo plano permite apenas ${limiteNovo}. Produtos acima do limite ficarão ocultos.`);
+    }
+
+    // Atualizar plano do vendedor
+    await db.query(`
+      UPDATE usuarios 
+      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+    `, [parseInt(novo_plano_id), limiteNovo, vendedor_id]);
+
+    req.flash('success', 'Plano alterado com sucesso!');
+    res.redirect('/admin/planos#vendedores');
+  } catch (error) {
+    console.error('Erro ao mudar plano:', error);
+    req.flash('error', 'Erro ao mudar plano: ' + error.message);
+    res.redirect('/admin/planos#vendedores');
+  }
+});
+
+// Rota para atribuir plano massivo a todos vendedores sem plano
+app.post('/admin/vendedor/atribuir-plano-massivo', requireAdmin, async (req, res) => {
+  const { plano_id } = req.body;
+  
+  try {
+    if (!plano_id) {
+      req.flash('error', 'Plano é obrigatório');
+      return res.redirect('/admin/planos#sem-plano');
+    }
+
+    // Verificar se plano existe
+    const plano = await db.query(
+      'SELECT * FROM planos_vendedor WHERE id = $1',
+      [plano_id]
+    );
+    
+    if (plano.rows.length === 0) {
+      req.flash('error', 'Plano não encontrado');
+      return res.redirect('/admin/planos#sem-plano');
+    }
+
+    const limite = plano.rows[0].limite_produtos;
+    
+    // Atribuir plano a todos vendedores sem plano
+    const result = await db.query(`
+      UPDATE usuarios 
+      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)
+      RETURNING id
+    `, [parseInt(plano_id), limite]);
+    
+    const qtdAtualizados = result.rowCount || 0;
+
+    req.flash('success', `Plano atribuído a ${qtdAtualizados} vendedores sem plano!`);
+    res.redirect('/admin/planos#sem-plano');
+  } catch (error) {
+    console.error('Erro ao atribuir plano massivo:', error);
+    req.flash('error', 'Erro ao atribuir plano massivo: ' + error.message);
+    res.redirect('/admin/planos#sem-plano');
+  }
+});
+
+// Rota para atualizar plano específico de um vendedor
+app.post('/admin/vendedor/:id/atualizar-plano', requireAdmin, async (req, res) => {
+  const { plano_id, limite_produtos } = req.body;
+  
+  try {
+    // Buscar informações do plano selecionado
+    let novoLimite = parseInt(limite_produtos) || 10;
+    
+    if (plano_id) {
+      const plano = await db.query(
+        'SELECT limite_produtos FROM planos_vendedor WHERE id = $1',
+        [plano_id]
+      );
+      
+      if (plano.rows.length > 0) {
+        novoLimite = plano.rows[0].limite_produtos;
+      }
+    }
+    
+    await db.query(`
+      UPDATE usuarios 
+      SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3 AND tipo = 'vendedor'
+    `, [
+      plano_id ? parseInt(plano_id) : null,
+      novoLimite,
+      req.params.id
+    ]);
+    
+    req.flash('success', 'Plano e limite atualizados com sucesso!');
+    res.redirect('/admin/vendedores');
+  } catch (error) {
+    console.error('Erro ao atualizar plano:', error);
+    req.flash('error', 'Erro ao atualizar plano');
+    res.redirect('/admin/vendedores');
+  }
+});
+
+// Rota auxiliar para AJAX - obter informações do plano
+app.get('/admin/plano-info/:id', requireAdmin, async (req, res) => {
+  try {
+    const plano = await db.query(
+      'SELECT id, nome, limite_produtos FROM planos_vendedor WHERE id = $1',
+      [req.params.id]
+    );
+    
+    if (plano.rows.length > 0) {
+      res.json({ 
+        success: true, 
+        nome: plano.rows[0].nome,
+        limite: plano.rows[0].limite_produtos 
+      });
+    } else {
+      res.json({ 
+        success: false, 
+        nome: 'Sem plano',
+        limite: 10 
+      });
+    }
+  } catch (error) {
+    console.error('Erro ao buscar plano:', error);
+    res.json({ 
+      success: false, 
+      nome: 'Erro', 
+      limite: 10 
+    });
+  }
+});
+
+// ==================== ROTA DE CATEGORIAS (ADICIONAR AO SERVER.JS) ====================
 app.get('/categorias', async (req, res) => {
   try {
-    console.log(`📂 Carregando página de categorias...`);
-    
+    // Buscar tudo em paralelo para ser rápido
     const [categorias, banners, produtosDestaque, lojas] = await Promise.all([
-      db.query('SELECT * FROM categorias WHERE ativo = true ORDER BY nome'),
+      // 1. Todas as categorias
+      db.query('SELECT * FROM categorias ORDER BY nome'),
+      
+      // 2. Banners ativos para o carrossel
+      db.query('SELECT * FROM banners WHERE ativo = true ORDER BY ordem'),
+      
+      // 3. Produtos em Destaque (Aleatórios)
       db.query(`
-        SELECT b.*, i.id as imagem_id 
-        FROM banners b 
-        LEFT JOIN imagens i ON b.imagem_id = i.id 
-        WHERE b.ativo = true 
-        ORDER BY b.ordem
-        LIMIT 5
-      `),
-      db.query(`
-        SELECT p.*, u.nome_loja,
+        SELECT p.*, u.nome_loja, u.foto_perfil as loja_foto,
                COALESCE(AVG(a.classificacao), 0) as media_classificacao
         FROM produtos p 
         JOIN usuarios u ON p.vendedor_id = u.id 
         LEFT JOIN avaliacoes a ON p.id = a.produto_id
         WHERE p.ativo = true AND p.destaque = true AND u.loja_ativa = true
-        GROUP BY p.id, u.nome_loja
+        GROUP BY p.id, u.nome_loja, u.foto_perfil
         ORDER BY RANDOM() 
         LIMIT 8
       `),
+      
+      // 4. Lojas Parceiras (Aleatórias)
       db.query(`
         SELECT u.*, COUNT(p.id) as total_produtos
         FROM usuarios u
@@ -3036,37 +2709,24 @@ app.get('/categorias', async (req, res) => {
       `)
     ]);
 
-    const bannersProcessados = banners.rows.map(banner => ({
-      ...banner,
-      imagem_url: banner.imagem_id ? `/imagem/${banner.imagem_id}` : '/images/banner-placeholder.jpg'
+    // Corrigir caminho das imagens dos banners
+    const bannersCorrigidos = banners.rows.map(b => ({
+      ...b,
+      imagem: `/uploads/banners/${b.imagem}`
     }));
 
-    const produtosDestaqueProcessados = produtosDestaque.rows.map(produto => ({
-      ...produto,
-      imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-      preco: parseFloat(produto.preco) || 0,
-      preco_promocional: produto.preco_promocional ? parseFloat(produto.preco_promocional) : null
-    }));
-
-    const lojasProcessadas = lojas.rows.map(loja => ({
-      ...loja,
-      foto_perfil_url: loja.foto_perfil_id ? `/imagem/${loja.foto_perfil_id}` : '/images/default-avatar.png',
-      total_produtos: parseInt(loja.total_produtos) || 0
-    }));
-
-    console.log(`✅ Página de categorias carregada`);
-    console.log(`   📂 Categorias: ${categorias.rows.length}`);
-    console.log(`   🖼️ Banners: ${bannersProcessados.length}`);
-
+    // Renderizar a página com todos os dados
     res.render('categorias', {
       title: 'Categorias - KuandaShop',
       categorias: categorias.rows,
-      banners: bannersProcessados,
-      produtosDestaque: produtosDestaqueProcessados,
-      lojas: lojasProcessadas
+      banners: bannersCorrigidos,
+      produtosDestaque: produtosDestaque.rows,
+      lojas: lojas.rows
     });
+
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR PÁGINA DE CATEGORIAS:', error.message);
+    console.error('Erro ao carregar página de categorias:', error);
+    // Em caso de erro, renderiza a página vazia para não travar (Erro 500)
     res.render('categorias', {
       title: 'Categorias',
       categorias: [],
@@ -3077,14 +2737,19 @@ app.get('/categorias', async (req, res) => {
   }
 });
 
-// Rota de ofertas
+// ==================== ROTA DE OFERTAS (CORRIGIDA E ROBUSTA) ====================
 app.get('/ofertas', async (req, res) => {
+  console.log('🔄 Iniciando rota /ofertas...'); // Log para confirmar que a rota foi chamada
+
   try {
-    console.log(`🏷️ Carregando ofertas...`);
-    
+    // 1. Verificar conexão com banco
+    if (!db) throw new Error('Conexão com banco de dados não estabelecida.');
+
+    // 2. Query de Produtos em Oferta
+    // Simplifiquei o GROUP BY para evitar erros estritos do PostgreSQL
     const queryOfertas = `
-      SELECT p.id, p.nome, p.preco, p.preco_promocional, p.imagem1_id, p.estoque, p.vip,
-             u.nome_loja, u.foto_perfil_id as loja_foto_id,
+      SELECT p.id, p.nome, p.preco, p.preco_promocional, p.imagem1, p.estoque, p.vip,
+             u.nome_loja, u.foto_perfil as loja_foto,
              c.nome as categoria_nome,
              c.id as categoria_id,
              COALESCE(AVG(a.classificacao), 0) as media_classificacao,
@@ -3098,11 +2763,11 @@ app.get('/ofertas', async (req, res) => {
         AND p.preco_promocional IS NOT NULL 
         AND p.preco_promocional > 0
         AND p.preco_promocional < p.preco
-      GROUP BY p.id, u.nome_loja, u.foto_perfil_id, c.nome, c.id
-      ORDER BY (p.preco - p.preco_promocional) DESC
-      LIMIT 20
+      GROUP BY p.id, u.nome_loja, u.foto_perfil, c.nome, c.id
+      ORDER BY p.created_at DESC
     `;
 
+    // 3. Query de Categorias (Apenas as que tem ofertas)
     const queryCategorias = `
       SELECT DISTINCT c.id, c.nome 
       FROM categorias c
@@ -3110,399 +2775,937 @@ app.get('/ofertas', async (req, res) => {
       WHERE p.preco_promocional > 0 AND p.ativo = true
       ORDER BY c.nome
     `;
+
+    console.log('📊 Buscando dados no banco...');
     
     const [ofertasResult, categoriasResult] = await Promise.all([
       db.query(queryOfertas),
       db.query(queryCategorias)
     ]);
 
-    const produtos = ofertasResult.rows.map(produto => {
-      const desconto = produto.preco > 0 ? 
-        Math.round(((produto.preco - produto.preco_promocional) / produto.preco) * 100) : 0;
-      
-      return {
-        ...produto,
-        imagem1_url: produto.imagem1_id ? `/imagem/${produto.imagem1_id}` : '/images/placeholder-product.png',
-        loja_foto_url: produto.loja_foto_id ? `/imagem/${produto.loja_foto_id}` : '/images/default-avatar.png',
-        preco: parseFloat(produto.preco) || 0,
-        preco_promocional: parseFloat(produto.preco_promocional) || 0,
-        estoque: parseInt(produto.estoque) || 0,
-        media_classificacao: parseFloat(produto.media_classificacao) || 0,
-        total_avaliacoes: parseInt(produto.total_avaliacoes) || 0,
-        desconto_percentual: desconto
-      };
-    });
+    console.log(`✅ Sucesso! ${ofertasResult.rows.length} ofertas encontradas.`);
 
-    console.log(`✅ ${produtos.length} ofertas carregadas`);
-
+    // 4. Renderização Segura
+    // Passamos explicitamente user, carrinho e messages para evitar erros no layout
     res.render('ofertas', {
       title: 'Ofertas Relâmpago | KuandaShop',
-      produtos,
-      categorias: categoriasResult.rows
+      produtos: ofertasResult.rows,
+      categorias: categoriasResult.rows,
+      user: req.session.user || null,
+      carrinho: req.session.carrinho || [],
+      messages: req.flash() // Garante que o toast não quebre
     });
+
   } catch (error) {
-    console.error('❌ ERRO NA ROTA /OFERTAS:', error.message);
-    res.render('ofertas', {
-      title: 'Ofertas Relâmpago | KuandaShop',
-      produtos: [],
-      categorias: []
+    console.error('❌ ERRO CRÍTICO NA ROTA /OFERTAS:', error);
+    console.error(error.stack); // Mostra a linha exata do erro
+
+    // Em vez de tela branca, renderiza a página de erro 500 bonita
+    res.status(500).render('500', {
+      layout: false, // Não usa o layout padrão para evitar loops de erro
+      error: error,
+      title: 'Erro ao carregar ofertas'
     });
   }
 });
 
-// Rota de jogos
-app.get('/games', async (req, res) => {
+// ==================== GERENCIAMENTO DE SOLICITAÇÕES VIP ====================
+app.get('/admin/solicitacoes-vip', requireAdmin, async (req, res) => {
   try {
-    const { genero, busca, ordenar } = req.query;
-    
-    console.log(`🎮 Carregando jogos - Gênero: ${genero || 'Todos'}, Busca: ${busca || 'Nenhuma'}, Ordenar: ${ordenar || 'padrão'}`);
-    
-    let query = `
-      SELECT j.*, i.id as imagem_id,
-      (j.vendas_count + j.downloads_count) as popularidade 
-      FROM jogos j 
-      LEFT JOIN imagens i ON j.capa_id = i.id 
-      WHERE j.ativo = true
-    `;
-    const params = [];
-    let paramCount = 0;
-
-    if (genero && genero !== 'todos') {
-      paramCount++;
-      query += ` AND j.genero = $${paramCount}`;
-      params.push(genero);
-    }
-
-    if (busca) {
-      paramCount++;
-      query += ` AND j.titulo ILIKE $${paramCount}`;
-      params.push(`%${busca}%`);
-    }
-
-    if (ordenar === 'novos') query += ' ORDER BY j.created_at DESC';
-    else if (ordenar === 'popular') query += ' ORDER BY popularidade DESC';
-    else if (ordenar === 'preco_asc') query += ' ORDER BY j.preco ASC';
-    else query += ' ORDER BY j.created_at DESC';
-
-    const jogosResult = await db.query(query, params);
-
-    const topJogosResult = await db.query(`
-      SELECT j.*, i.id as imagem_id 
-      FROM jogos j 
-      LEFT JOIN imagens i ON j.capa_id = i.id 
-      WHERE j.ativo = true 
-      ORDER BY (j.vendas_count + j.downloads_count) DESC 
-      LIMIT 5
+    const solicitacoes = await db.query(`
+      SELECT sv.*, p.nome as produto_nome, p.imagem1, u.nome as vendedor_nome, u.telefone, u.email, u.nome_loja
+      FROM solicitacoes_vip sv
+      JOIN produtos p ON sv.produto_id = p.id
+      JOIN usuarios u ON sv.vendedor_id = u.id
+      WHERE sv.status = 'pendente'
+      ORDER BY sv.created_at DESC
     `);
 
-    const generosResult = await db.query('SELECT DISTINCT genero FROM jogos WHERE genero IS NOT NULL AND genero != \'\'');
-
-    const jogos = jogosResult.rows.map(jogo => ({
-      ...jogo,
-      capa_url: jogo.imagem_id ? `/imagem/${jogo.imagem_id}` : '/images/game-placeholder.jpg',
-      preco: parseFloat(jogo.preco) || 0,
-      vendas_count: parseInt(jogo.vendas_count) || 0,
-      downloads_count: parseInt(jogo.downloads_count) || 0,
-      popularidade: parseInt(jogo.popularidade) || 0
-    }));
-
-    const topJogos = topJogosResult.rows.map(jogo => ({
-      ...jogo,
-      capa_url: jogo.imagem_id ? `/imagem/${jogo.imagem_id}` : '/images/game-placeholder.jpg'
-    }));
-
-    console.log(`✅ ${jogos.length} jogos carregados`);
-
-    res.render('games', {
-      title: 'Kuanda Games - Loja Oficial',
-      jogos,
-      topJogos,
-      generos: generosResult.rows,
-      filtros: { genero: genero || 'todos', busca: busca || '', ordenar: ordenar || 'novos' }
+    res.render('admin/solicitacoes-vip', {
+      solicitacoes: solicitacoes.rows,
+      title: 'Solicitações VIP - KuandaShop'
     });
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR GAMES:', error.message);
-    res.redirect('/');
+    console.error('Erro ao carregar solicitações VIP:', error);
+    res.render('admin/solicitacoes-vip', { 
+      solicitacoes: [],
+      title: 'Solicitações VIP'
+    });
   }
 });
 
-// Rota de detalhes do jogo
-app.get('/game/:id', async (req, res) => {
+app.post('/admin/solicitacao-vip/:id/aprovar', requireAdmin, async (req, res) => {
   try {
-    const jogoId = req.params.id;
-    console.log(`🎮 Carregando detalhes do jogo ${jogoId}...`);
+    const solicitacao = await db.query(`
+      SELECT sv.*, p.nome as produto_nome, u.nome as vendedor_nome
+      FROM solicitacoes_vip sv
+      JOIN produtos p ON sv.produto_id = p.id
+      JOIN usuarios u ON sv.vendedor_id = u.id
+      WHERE sv.id = $1
+    `, [req.params.id]);
     
-    const jogoResult = await db.query(`
-      SELECT j.*, i_capa.id as capa_imagem_id, i_banner.id as banner_imagem_id
-      FROM jogos j 
-      LEFT JOIN imagens i_capa ON j.capa_id = i_capa.id 
-      LEFT JOIN imagens i_banner ON j.banner_id = i_banner.id 
-      WHERE j.id = $1 AND j.ativo = true
-    `, [jogoId]);
-    
-    if (jogoResult.rows.length === 0) {
-      console.log(`❌ Jogo ${jogoId} não encontrado`);
-      return res.status(404).render('404', { 
-        layout: false,
-        title: '404 - Jogo não encontrado'
-      });
+    if (solicitacao.rows.length === 0) {
+      req.flash('error', 'Solicitação não encontrada');
+      return res.redirect('/admin/solicitacoes-vip');
     }
 
-    const jogo = jogoResult.rows[0];
-    jogo.capa_url = jogo.capa_imagem_id ? `/imagem/${jogo.capa_imagem_id}` : '/images/game-placeholder.jpg';
-    jogo.banner_url = jogo.banner_imagem_id ? `/imagem/${jogo.banner_imagem_id}` : null;
-    jogo.preco = parseFloat(jogo.preco) || 0;
-    jogo.vendas_count = parseInt(jogo.vendas_count) || 0;
-    jogo.downloads_count = parseInt(jogo.downloads_count) || 0;
+    const sol = solicitacao.rows[0];
 
-    const [similaresResult] = await Promise.all([
-      db.query(`
-        SELECT j.*, i.id as imagem_id 
-        FROM jogos j 
-        LEFT JOIN imagens i ON j.capa_id = i.id 
-        WHERE j.genero = $1 AND j.id != $2 AND j.ativo = true 
-        ORDER BY RANDOM() 
-        LIMIT 4
-      `, [jogo.genero, jogoId])
+    // Atualizar produto para VIP
+    await db.query(
+      'UPDATE produtos SET vip = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [sol.produto_id]
+    );
+    
+    // Atualizar status da solicitação
+    await db.query(
+      'UPDATE solicitacoes_vip SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      ['aprovada', req.params.id]
+    );
+
+    req.flash('success', `Solicitação aprovada! Produto "${sol.produto_nome}" agora é VIP.`);
+    res.redirect('/admin/solicitacoes-vip');
+  } catch (error) {
+    console.error('Erro ao aprovar solicitação:', error);
+    req.flash('error', 'Erro ao aprovar solicitação');
+    res.redirect('/admin/solicitacoes-vip');
+  }
+});
+
+app.post('/admin/solicitacao-vip/:id/rejeitar', requireAdmin, async (req, res) => {
+  try {
+    const { motivo } = req.body;
+    
+    if (!motivo || motivo.trim().length < 5) {
+      req.flash('error', 'É necessário fornecer um motivo para rejeição (mínimo 5 caracteres)');
+      return res.redirect('/admin/solicitacoes-vip');
+    }
+    
+    await db.query(`
+      UPDATE solicitacoes_vip 
+      SET status = $1, motivo_rejeicao = $2, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $3
+    `, ['rejeitada', motivo.trim(), req.params.id]);
+
+    req.flash('success', 'Solicitação rejeitada.');
+    res.redirect('/admin/solicitacoes-vip');
+  } catch (error) {
+    console.error('Erro ao rejeitar solicitação:', error);
+    req.flash('error', 'Erro ao rejeitar solicitação');
+    res.redirect('/admin/solicitacoes-vip');
+  }
+});
+
+// ==================== GERENCIAMENTO DE BANNERS ====================
+app.get('/admin/banners', requireAdmin, async (req, res) => {
+  try {
+    const banners = await db.query(`
+      SELECT * FROM banners 
+      ORDER BY ordem, created_at DESC
+    `);
+    
+    res.render('admin/banners', {
+      banners: banners.rows,
+      title: 'Gerenciar Banners - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar banners:', error);
+    req.flash('error', 'Erro ao carregar banners');
+    res.render('admin/banners', {
+      banners: [],
+      title: 'Gerenciar Banners'
+    });
+  }
+});
+
+app.get('/admin/banners/novo', requireAdmin, (req, res) => {
+  res.render('admin/banner-form', {
+    banner: null,
+    action: '/admin/banners',
+    title: 'Novo Banner - KuandaShop'
+  });
+});
+
+app.post('/admin/banners', requireAdmin, upload.single('imagem'), async (req, res) => {
+  const { titulo, link, ordem, ativo } = req.body;
+  
+  try {
+    if (!req.file) {
+      req.flash('error', 'É necessário enviar uma imagem para o banner');
+      return res.redirect('/admin/banners/novo');
+    }
+
+    await db.query(`
+      INSERT INTO banners (titulo, imagem, link, ordem, ativo)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [
+      titulo ? titulo.trim() : null,
+      req.file.filename,
+      link ? link.trim() : null,
+      ordem ? parseInt(ordem) : 0,
+      ativo === 'on'
     ]);
     
-    const similares = similaresResult.rows.map(jogoSimilar => ({
-      ...jogoSimilar,
-      capa_url: jogoSimilar.imagem_id ? `/imagem/${jogoSimilar.imagem_id}` : '/images/game-placeholder.jpg'
-    }));
-
-    console.log(`✅ Jogo ${jogoId} carregado`);
-    console.log(`   🎮 Similares: ${similares.length}`);
-
-    res.render('game_detalhes', {
-      title: `${jogo.titulo} - Kuanda Games`,
-      jogo,
-      similares
-    });
+    req.flash('success', 'Banner criado com sucesso!');
+    res.redirect('/admin/banners');
   } catch (error) {
-    console.error('❌ ERRO AO CARREGAR JOGO:', error.message);
-    res.redirect('/games');
+    console.error('Erro ao criar banner:', error);
+    
+    if (req.file) {
+      const filePath = path.join('public/uploads/banners/', req.file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    
+    req.flash('error', 'Erro ao criar banner');
+    res.redirect('/admin/banners/novo');
   }
 });
 
-// ==================== LIMPEZA PERIÓDICA DE ARQUIVOS TEMPORÁRIOS ====================
-setInterval(async () => {
+app.get('/admin/banners/:id/editar', requireAdmin, async (req, res) => {
   try {
-    const tempDir = 'tmp/uploads/';
+    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
     
-    if (fsSync.existsSync(tempDir)) {
-      const files = fsSync.readdirSync(tempDir, { recursive: true });
-      const now = Date.now();
-      let removedCount = 0;
-      
-      for (const file of files) {
-        const filePath = path.join(tempDir, file);
-        try {
-          const stats = fsSync.statSync(filePath);
-          
-          // Remover arquivos com mais de 24 horas
-          if (now - stats.mtime.getTime() > 24 * 60 * 60 * 1000) {
-            await fs.unlink(filePath);
-            removedCount++;
-          }
-        } catch (fileError) {
-          console.error(`Erro ao processar arquivo ${filePath}:`, fileError.message);
+    if (banner.rows.length === 0) {
+      req.flash('error', 'Banner não encontrado');
+      return res.redirect('/admin/banners');
+    }
+    
+    res.render('admin/banner-form', {
+      banner: banner.rows[0],
+      action: `/admin/banners/${req.params.id}?_method=PUT`,
+      title: 'Editar Banner - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar banner:', error);
+    req.flash('error', 'Erro ao carregar banner');
+    res.redirect('/admin/banners');
+  }
+});
+
+app.put('/admin/banners/:id', requireAdmin, upload.single('imagem'), async (req, res) => {
+  const { titulo, link, ordem, ativo } = req.body;
+  
+  try {
+    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
+    
+    if (banner.rows.length === 0) {
+      req.flash('error', 'Banner não encontrado');
+      return res.redirect('/admin/banners');
+    }
+    
+    let imagem = banner.rows[0].imagem;
+    
+    if (req.file) {
+      // Remover arquivo antigo se existir
+      const oldPath = path.join('public/uploads/banners/', banner.rows[0].imagem);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+      imagem = req.file.filename;
+    }
+    
+    await db.query(`
+      UPDATE banners 
+      SET titulo = $1, imagem = $2, link = $3, ordem = $4, ativo = $5, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $6
+    `, [
+      titulo ? titulo.trim() : null,
+      imagem,
+      link ? link.trim() : null,
+      ordem ? parseInt(ordem) : 0,
+      ativo === 'on',
+      req.params.id
+    ]);
+    
+    req.flash('success', 'Banner atualizado com sucesso!');
+    res.redirect('/admin/banners');
+  } catch (error) {
+    console.error('Erro ao atualizar banner:', error);
+    req.flash('error', 'Erro ao atualizar banner');
+    res.redirect(`/admin/banners/${req.params.id}/editar`);
+  }
+});
+
+app.delete('/admin/banners/:id', requireAdmin, async (req, res) => {
+  try {
+    const banner = await db.query('SELECT * FROM banners WHERE id = $1', [req.params.id]);
+    
+    if (banner.rows.length === 0) {
+      req.flash('error', 'Banner não encontrado');
+      return res.redirect('/admin/banners');
+    }
+    
+    const filePath = path.join('public/uploads/banners/', banner.rows[0].imagem);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    await db.query('DELETE FROM banners WHERE id = $1', [req.params.id]);
+    
+    req.flash('success', 'Banner excluído com sucesso!');
+    res.redirect('/admin/banners');
+  } catch (error) {
+    console.error('Erro ao excluir banner:', error);
+    req.flash('error', 'Erro ao excluir banner');
+    res.redirect('/admin/banners');
+  }
+});
+
+app.post('/admin/banners/:id/toggle-status', requireAdmin, async (req, res) => {
+  try {
+    const banner = await db.query('SELECT ativo FROM banners WHERE id = $1', [req.params.id]);
+    
+    if (banner.rows.length === 0) {
+      return res.json({ success: false, message: 'Banner não encontrado' });
+    }
+    
+    const novoStatus = !banner.rows[0].ativo;
+    
+    await db.query(
+      'UPDATE banners SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novoStatus, req.params.id]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Banner ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
+      novoStatus 
+    });
+  } catch (error) {
+    console.error('Erro ao alterar status:', error);
+    res.json({ success: false, message: 'Erro ao alterar status' });
+  }
+});
+
+// ==================== GERENCIAMENTO DE FILMES ====================
+app.get('/admin/filmes', requireAdmin, async (req, res) => {
+  try {
+    const filmes = await db.query(`
+      SELECT * FROM filmes 
+      ORDER BY data_lancamento DESC, created_at DESC
+    `);
+    
+    res.render('admin/filmes', {
+      filmes: filmes.rows,
+      title: 'Gerenciar Filmes - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar filmes:', error);
+    req.flash('error', 'Erro ao carregar filmes');
+    res.render('admin/filmes', {
+      filmes: [],
+      title: 'Gerenciar Filmes'
+    });
+  }
+});
+
+app.get('/admin/filmes/novo', requireAdmin, (req, res) => {
+  res.render('admin/filme-form', {
+    filme: null,
+    action: '/admin/filmes',
+    title: 'Novo Filme - KuandaShop'
+  });
+});
+
+app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res) => {
+  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
+  
+  try {
+    if (!req.file) {
+      req.flash('error', 'É necessário enviar um poster para o filme');
+      return res.redirect('/admin/filmes/novo');
+    }
+
+    await db.query(`
+      INSERT INTO filmes (titulo, poster, trailer_url, sinopse, data_lancamento, classificacao, ativo)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [
+      titulo.trim(),
+      req.file.filename,
+      trailer_url ? trailer_url.trim() : null,
+      sinopse ? sinopse.trim() : null,
+      data_lancamento,
+      classificacao ? classificacao.trim() : null,
+      ativo === 'on'
+    ]);
+    
+    req.flash('success', 'Filme adicionado com sucesso!');
+    res.redirect('/admin/filmes');
+  } catch (error) {
+    console.error('Erro ao criar filme:', error);
+    
+    if (req.file) {
+      const filePath = path.join('public/uploads/filmes/', req.file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    
+    req.flash('error', 'Erro ao criar filme');
+    res.redirect('/admin/filmes/novo');
+  }
+});
+
+app.get('/admin/filmes/:id/editar', requireAdmin, async (req, res) => {
+  try {
+    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
+    
+    if (filme.rows.length === 0) {
+      req.flash('error', 'Filme não encontrado');
+      return res.redirect('/admin/filmes');
+    }
+    
+    res.render('admin/filme-form', {
+      filme: filme.rows[0],
+      action: `/admin/filmes/${req.params.id}?_method=PUT`,
+      title: 'Editar Filme - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar filme:', error);
+    req.flash('error', 'Erro ao carregar filme');
+    res.redirect('/admin/filmes');
+  }
+});
+
+app.put('/admin/filmes/:id', requireAdmin, upload.single('poster'), async (req, res) => {
+  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
+  
+  try {
+    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
+    
+    if (filme.rows.length === 0) {
+      req.flash('error', 'Filme não encontrado');
+      return res.redirect('/admin/filmes');
+    }
+    
+    let poster = filme.rows[0].poster;
+    
+    if (req.file) {
+      if (filme.rows[0].poster) {
+        const oldPath = path.join('public/uploads/filmes/', filme.rows[0].poster);
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
         }
       }
-      
-      if (removedCount > 0) {
-        console.log(`🧹 ${removedCount} arquivos temporários removidos`);
+      poster = req.file.filename;
+    }
+    
+    await db.query(`
+      UPDATE filmes 
+      SET titulo = $1, poster = $2, trailer_url = $3, sinopse = $4, 
+          data_lancamento = $5, classificacao = $6, ativo = $7, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
+    `, [
+      titulo.trim(),
+      poster,
+      trailer_url ? trailer_url.trim() : null,
+      sinopse ? sinopse.trim() : null,
+      data_lancamento,
+      classificacao ? classificacao.trim() : null,
+      ativo === 'on',
+      req.params.id
+    ]);
+    
+    req.flash('success', 'Filme atualizado com sucesso!');
+    res.redirect('/admin/filmes');
+  } catch (error) {
+    console.error('Erro ao atualizar filme:', error);
+    req.flash('error', 'Erro ao atualizar filme');
+    res.redirect(`/admin/filmes/${req.params.id}/editar`);
+  }
+});
+
+app.delete('/admin/filmes/:id', requireAdmin, async (req, res) => {
+  try {
+    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
+    
+    if (filme.rows.length === 0) {
+      req.flash('error', 'Filme não encontrado');
+      return res.redirect('/admin/filmes');
+    }
+    
+    if (filme.rows[0].poster) {
+      const filePath = path.join('public/uploads/filmes/', filme.rows[0].poster);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
       }
     }
+    
+    await db.query('DELETE FROM filmes WHERE id = $1', [req.params.id]);
+    
+    req.flash('success', 'Filme excluído com sucesso!');
+    res.redirect('/admin/filmes');
   } catch (error) {
-    console.error('❌ ERRO AO LIMPAR ARQUIVOS TEMPORÁRIOS:', error.message);
+    console.error('Erro ao excluir filme:', error);
+    req.flash('error', 'Erro ao excluir filme');
+    res.redirect('/admin/filmes');
   }
-}, 60 * 60 * 1000); // Executar a cada hora
+});
 
-// ==================== TRATAMENTO DE ERROS ROBUSTO ====================
-
-// Middleware para capturar erros do Multer
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    console.error('❌ ERRO DO MULTER:', err.message);
+app.post('/admin/filmes/:id/toggle-status', requireAdmin, async (req, res) => {
+  try {
+    const filme = await db.query('SELECT ativo FROM filmes WHERE id = $1', [req.params.id]);
     
-    let errorMessage = 'Erro no upload do arquivo';
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      errorMessage = 'Arquivo muito grande. Tamanho máximo: 10MB';
-    } else if (err.code === 'LIMIT_FILE_COUNT') {
-      errorMessage = 'Número máximo de arquivos excedido';
-    } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-      errorMessage = 'Tipo de arquivo não permitido ou campo inválido';
+    if (filme.rows.length === 0) {
+      return res.json({ success: false, message: 'Filme não encontrado' });
     }
     
-    if (req.session && typeof req.flash === 'function') {
-      req.flash('error', errorMessage);
-      return res.redirect('back');
-    }
+    const novoStatus = !filme.rows[0].ativo;
     
-    return res.status(400).json({ 
-      success: false, 
-      error: errorMessage 
+    await db.query(
+      'UPDATE filmes SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novoStatus, req.params.id]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Filme ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
+      novoStatus 
+    });
+  } catch (error) {
+    console.error('Erro ao alterar status:', error);
+    res.json({ success: false, message: 'Erro ao alterar status' });
+  }
+});
+
+// ==================== CONFIGURAÇÕES DO SITE ====================
+app.get('/admin/configuracoes', requireAdmin, async (req, res) => {
+  try {
+    const configuracoes = await db.query('SELECT * FROM configuracoes LIMIT 1');
+    
+    res.render('admin/configuracoes', {
+      config: configuracoes.rows[0] || {},
+      title: 'Configurações do Site - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar configurações:', error);
+    res.render('admin/configuracoes', {
+      config: {},
+      title: 'Configurações do Site'
     });
   }
-  
-  next(err);
 });
+
+app.post('/admin/configuracoes', requireAdmin, async (req, res) => {
+  const { nome_site, email_contato, telefone_contato, endereco, sobre_nos } = req.body;
+  
+  try {
+    const configExistente = await db.query('SELECT id FROM configuracoes LIMIT 1');
+    
+    if (configExistente.rows.length > 0) {
+      await db.query(`
+        UPDATE configuracoes 
+        SET nome_site = $1, email_contato = $2, telefone_contato = $3, 
+            endereco = $4, sobre_nos = $5, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $6
+      `, [
+        nome_site ? nome_site.trim() : 'KuandaShop',
+        email_contato ? email_contato.trim() : null,
+        telefone_contato ? telefone_contato.trim() : null,
+        endereco ? endereco.trim() : null,
+        sobre_nos ? sobre_nos.trim() : null,
+        configExistente.rows[0].id
+      ]);
+    } else {
+      await db.query(`
+        INSERT INTO configuracoes (nome_site, email_contato, telefone_contato, endereco, sobre_nos)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [
+        nome_site ? nome_site.trim() : 'KuandaShop',
+        email_contato ? email_contato.trim() : null,
+        telefone_contato ? telefone_contato.trim() : null,
+        endereco ? endereco.trim() : null,
+        sobre_nos ? sobre_nos.trim() : null
+      ]);
+    }
+    
+    req.flash('success', 'Configurações atualizadas com sucesso!');
+    res.redirect('/admin/configuracoes');
+  } catch (error) {
+    console.error('Erro ao salvar configurações:', error);
+    req.flash('error', 'Erro ao salvar configurações');
+    res.redirect('/admin/configuracoes');
+  }
+});
+
+// ==================== GERENCIAMENTO DE CATEGORIAS ====================
+app.get('/admin/categorias', requireAdmin, async (req, res) => {
+  try {
+    const categorias = await db.query('SELECT * FROM categorias ORDER BY nome');
+    
+    res.render('admin/categorias', {
+      categorias: categorias.rows,
+      title: 'Gerenciar Categorias - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar categorias:', error);
+    res.render('admin/categorias', {
+      categorias: [],
+      title: 'Gerenciar Categorias'
+    });
+  }
+});
+
+app.post('/admin/categorias', requireAdmin, async (req, res) => {
+  const { nome, descricao } = req.body;
+  
+  try {
+    if (!nome || nome.trim().length < 2) {
+      req.flash('error', 'Nome da categoria deve ter pelo menos 2 caracteres');
+      return res.redirect('/admin/categorias');
+    }
+
+    await db.query(`
+      INSERT INTO categorias (nome, descricao)
+      VALUES ($1, $2)
+    `, [nome.trim(), descricao ? descricao.trim() : null]);
+    
+    req.flash('success', 'Categoria criada com sucesso!');
+    res.redirect('/admin/categorias');
+  } catch (error) {
+    console.error('Erro ao criar categoria:', error);
+    req.flash('error', 'Erro ao criar categoria');
+    res.redirect('/admin/categorias');
+  }
+});
+
+app.put('/admin/categorias/:id', requireAdmin, async (req, res) => {
+  const { nome, descricao } = req.body;
+  
+  try {
+    if (!nome || nome.trim().length < 2) {
+      req.flash('error', 'Nome da categoria deve ter pelo menos 2 caracteres');
+      return res.redirect('/admin/categorias');
+    }
+
+    await db.query(`
+      UPDATE categorias 
+      SET nome = $1, descricao = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+    `, [nome.trim(), descricao ? descricao.trim() : null, req.params.id]);
+    
+    req.flash('success', 'Categoria atualizada com sucesso!');
+    res.redirect('/admin/categorias');
+  } catch (error) {
+    console.error('Erro ao atualizar categoria:', error);
+    req.flash('error', 'Erro ao atualizar categoria');
+    res.redirect('/admin/categorias');
+  }
+});
+
+app.delete('/admin/categorias/:id', requireAdmin, async (req, res) => {
+  try {
+    const produtos = await db.query(
+      'SELECT COUNT(*) as total FROM produtos WHERE categoria_id = $1',
+      [req.params.id]
+    );
+    
+    if (parseInt(produtos.rows[0].total) > 0) {
+      req.flash('error', 'Esta categoria está sendo usada por produtos e não pode ser removida');
+      return res.redirect('/admin/categorias');
+    }
+    
+    await db.query('DELETE FROM categorias WHERE id = $1', [req.params.id]);
+    
+    req.flash('success', 'Categoria removida com sucesso!');
+    res.redirect('/admin/categorias');
+  } catch (error) {
+    console.error('Erro ao remover categoria:', error);
+    req.flash('error', 'Erro ao remover categoria');
+    res.redirect('/admin/categorias');
+  }
+});
+
+// ==================== GERENCIAMENTO DE PLANOS ====================
+app.get('/admin/planos', requireAdmin, async (req, res) => {
+  try {
+    const [planos, vendedoresPorPlano, vendedoresSemPlano, statsResult] = await Promise.all([
+      db.query(`
+        SELECT pv.*, COUNT(u.id) as total_vendedores
+        FROM planos_vendedor pv
+        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
+        GROUP BY pv.id
+        ORDER BY pv.limite_produtos
+      `),
+      // Vendedores agrupados por plano
+      db.query(`
+        SELECT 
+          pv.nome as plano_nome,
+          pv.id as plano_id,
+          json_agg(
+            json_build_object(
+              'id', u.id,
+              'nome', u.nome,
+              'nome_loja', u.nome_loja,
+              'email', u.email,
+              'telefone', u.telefone,
+              'foto_perfil', u.foto_perfil,
+              'loja_ativa', u.loja_ativa,
+              'created_at', u.created_at,
+              'plano_id', u.plano_id,
+              'limite_produtos', u.limite_produtos,
+              'total_produtos', (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id)
+            )
+          ) as vendedores
+        FROM planos_vendedor pv
+        LEFT JOIN usuarios u ON pv.id = u.plano_id AND u.tipo = 'vendedor'
+        WHERE u.id IS NOT NULL
+        GROUP BY pv.id, pv.nome
+        ORDER BY pv.limite_produtos
+      `),
+      // Vendedores sem plano
+      db.query(`
+        SELECT 
+          u.*,
+          (SELECT COUNT(*) FROM produtos p WHERE p.vendedor_id = u.id) as total_produtos
+        FROM usuarios u
+        WHERE u.tipo = 'vendedor' 
+          AND (u.plano_id IS NULL OR u.plano_id = 0)
+        ORDER BY u.created_at DESC
+      `),
+      // Estatísticas
+      db.query(`
+        SELECT 
+          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND loja_ativa = true) as vendedores_ativos,
+          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND plano_id IS NOT NULL) as vendedores_com_plano,
+          (SELECT COUNT(*) FROM usuarios WHERE tipo = 'vendedor' AND (plano_id IS NULL OR plano_id = 0)) as vendedores_sem_plano,
+          (SELECT COUNT(*) FROM planos_vendedor) as total_planos
+      `)
+    ]);
+
+    // Corrigir a estrutura dos dados
+    const stats = statsResult.rows[0] || {
+      vendedores_ativos: 0,
+      vendedores_com_plano: 0,
+      vendedores_sem_plano: 0,
+      total_planos: 0
+    };
+
+    res.render('admin/planos', {
+      planos: planos.rows,
+      vendedoresPorPlano: vendedoresPorPlano.rows,
+      vendedoresSemPlano: vendedoresSemPlano.rows,
+      stats: stats, // Nome correto da variável
+      title: 'Gerenciar Planos - KuandaShop'
+    });
+  } catch (error) {
+    console.error('Erro ao carregar planos:', error);
+    res.render('admin/planos', { 
+      planos: [],
+      vendedoresPorPlano: [],
+      vendedoresSemPlano: [],
+      stats: {
+        vendedores_ativos: 0,
+        vendedores_com_plano: 0,
+        vendedores_sem_plano: 0,
+        total_planos: 0
+      },
+      title: 'Gerenciar Planos de Vendedores'
+    });
+  }
+});
+
+// ==================== ROTA PARA MIGRAÇÃO DOS PLANOS ====================
+app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
+  try {
+    // Verificar se a tabela planos_vendedor existe
+    const tableExists = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'planos_vendedor'
+      )
+    `);
+
+    if (!tableExists.rows[0].exists) {
+      req.flash('error', 'Tabela de planos não existe. Execute o script SQL primeiro.');
+      return res.redirect('/admin');
+    }
+
+    // Verificar se já existem planos
+    const planosExistentes = await db.query('SELECT COUNT(*) as total FROM planos_vendedor');
+    
+    if (parseInt(planosExistentes.rows[0].total) === 0) {
+      // Criar planos padrão
+      await db.query(`
+        INSERT INTO planos_vendedor (nome, limite_produtos, preco_mensal, permite_vip, permite_destaque) VALUES
+        ('Básico', 10, 0.00, false, false),
+        ('Pro', 50, 99.90, true, true),
+        ('Premium', 200, 299.90, true, true),
+        ('Enterprise', 1000, 999.90, true, true)
+      `);
+      
+      req.flash('success', 'Planos padrão criados com sucesso!');
+    } else {
+      req.flash('info', 'Planos já existem no sistema.');
+    }
+
+    // Atualizar vendedores existentes
+    const vendedoresSemPlano = await db.query(`
+      SELECT COUNT(*) as total 
+      FROM usuarios 
+      WHERE tipo = 'vendedor' AND plano_id IS NULL
+    `);
+
+    if (parseInt(vendedoresSemPlano.rows[0].total) > 0) {
+      const planoBasico = await db.query(
+        "SELECT id FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
+      );
+      
+      if (planoBasico.rows.length > 0) {
+        await db.query(`
+          UPDATE usuarios 
+          SET plano_id = $1, limite_produtos = 10
+          WHERE tipo = 'vendedor' AND plano_id IS NULL
+        `, [planoBasico.rows[0].id]);
+        
+        req.flash('success', `${vendedoresSemPlano.rows[0].total} vendedores atualizados para o plano Básico.`);
+      }
+    }
+
+    res.redirect('/admin/planos');
+  } catch (error) {
+    console.error('Erro na migração de planos:', error);
+    req.flash('error', 'Erro na migração de planos: ' + error.message);
+    res.redirect('/admin');
+  }
+});
+
+// ==================== TRATAMENTO DE ERROS (BLINDADO) ====================
 
 // 1. Erro 404 - Página não encontrada
 app.use((req, res) => {
-  console.log(`❓ Rota não encontrada: ${req.originalUrl}`);
-  
+  // Acesso seguro ao usuário (previne erro se o banco cair)
   const safeUser = (req.session && req.session.user) ? req.session.user : null;
 
   res.status(404).render('404', {
     layout: false,
     title: '404 - Página não encontrada',
-    user: safeUser,
-    currentUser: safeUser,
-    message: 'A página que você está procurando não existe ou foi movida.'
+    user: safeUser, // Passa como 'user' ou 'currentUser' dependendo da sua view
+    currentUser: safeUser
   });
 });
 
-// 2. Erro 500 - Erro Interno do Servidor
+// 2. Erros do Multer (Upload)
 app.use((err, req, res, next) => {
-  console.error('❌ ERRO CRÍTICO NO SERVIDOR:', err.message);
-  console.error('Stack trace:', err.stack);
-  console.error('Request URL:', req.originalUrl);
-  console.error('Request Method:', req.method);
-  console.error('User:', req.session?.user?.id || 'guest');
+  if (err instanceof multer.MulterError) {
+    // Só tenta usar flash se a sessão estiver ativa
+    if (req.session && typeof req.flash === 'function') {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        req.flash('error', 'Arquivo muito grande. Tamanho máximo: 5MB');
+      } else {
+        req.flash('error', `Erro no upload: ${err.message}`);
+      }
+      return res.redirect('back');
+    }
+    // Se a sessão caiu, passa para o erro 500 tratar
+    return next(err);
+  }
   
+  // Se não for erro do Multer, passa para o próximo
+  next(err);
+});
+
+// 3. Erro 500 - Erro Interno (Onde ocorria a falha crítica)
+app.use((err, req, res, next) => {
+  console.error('❌ ERRO CRÍTICO NO SERVIDOR:', err);
+  
+  // Se a resposta já foi enviada, não faz nada
   if (res.headersSent) {
     return next(err);
   }
 
+  // Tenta limpar a sessão APENAS se ela existir
+  // Isso corrige o erro: "Cannot read properties of undefined (reading 'destroy')"
+  if (req.session && typeof req.session.destroy === 'function') {
+    // Se for erro de sessão/banco ou flash, tenta destruir a sessão corrompida
+    if (err.code === '08P01' || err.code === 'ECONNREFUSED' || (err.message && err.message.includes('flash'))) {
+      req.session.destroy((destroyErr) => {
+        if (destroyErr) console.error('Erro secundário ao destruir sessão:', destroyErr);
+      });
+    }
+  }
+
+  // Define um usuário nulo para a view não quebrar
   const safeUser = (req.session && req.session.user) ? req.session.user : null;
 
   res.status(500).render('500', {
     layout: false,
     title: '500 - Erro interno do servidor',
-    error: process.env.NODE_ENV === 'development' ? {
-      message: err.message,
-      stack: err.stack,
-      url: req.originalUrl,
-      method: req.method
-    } : { 
-      message: 'Ocorreu um erro inesperado. Nossa equipe foi notificada e está trabalhando na solução.' 
-    },
+    // Mostra o erro detalhado apenas em desenvolvimento
+    error: process.env.NODE_ENV === 'development' ? err : { message: 'Ocorreu um erro inesperado. Tente novamente.' },
     user: safeUser,
     currentUser: safeUser
   });
 });
 
 // ==================== INICIALIZAR SERVIDOR ====================
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, () => {
   console.log(`
   ====================================================
-  🚀 KUANDASHOP MARKETPLACE MULTI-VENDOR - PRODUÇÃO
+  🚀 KUANDASHOP MARKETPLACE MULTI-VENDOR
   ====================================================
-  ✅ SISTEMA INICIALIZADO COM SUCESSO!
-  ✅ Versão: 3.0.0 - Sistema Completo de Produção
-  ✅ Data: ${new Date().toLocaleString('pt-BR')}
+  ✅ Sistema inicializado com sucesso!
+  ✅ Banco de dados conectado
+  ✅ Sessões configuradas no PostgreSQL
+  ✅ Uploads configurados
+  ✅ Painéis administrativos prontos
+  ✅ Sistema de planos implementado
   
   📍 Porta: ${PORT}
-  🌐 Ambiente: ${process.env.NODE_ENV || 'production'}
+  🌐 Ambiente: ${process.env.NODE_ENV || 'development'}
   🔗 URL: http://localhost:${PORT}
-  🗄️ Banco: PostgreSQL com persistência completa
-  🖼️ Sistema: Imagens 100% persistentes no banco (BYTEA)
   
-  🔧 FUNCIONALIDADES IMPLEMENTADAS:
-  • Sistema completo de autenticação (Login/Registro)
-  • Painel administrativo completo
-  • Painel do vendedor completo
-  • Carrinho de compras robusto
-  • Sistema de avaliações
-  • Seguidores de lojas
-  • Produtos VIP e em destaque
-  • Sistema de planos com limites
-  • Upload de imagens persistente no banco
-  • Banners dinâmicos
-  • Catálogo de filmes
-  • Loja de jogos completa
-  • Páginas de categorias e ofertas
-  • Gerenciamento completo de usuários
-  • Sistema de solicitações VIP
-  • Sistema de vendas
+  👤 Credenciais Admin:
+    Email: admin@kuandashop.ao
+    Senha: password
   
-  🛡️ SISTEMA ROBUSTO:
-  • Tratamento de erros em todas as rotas
-  • Validação completa de dados
-  • Logs detalhados para debug
-  • Limpeza automática de temporários
-  • Persistência garantida de imagens (BYTEA)
-  • Sessions persistentes no PostgreSQL
-  • Cache otimizado de imagens (1 ano)
-  • Timeout de requisições para prevenir travamento
+  📊 Funcionalidades disponíveis:
+    • Página inicial com banners
+    • Catálogo de produtos
+    • Sistema de avaliações
+    • Carrinho de compras
+    • Painel do vendedor
+    • Painel administrativo
+    • Gerenciamento de banners
+    • Gerenciamento de filmes
+    • Sistema de VIP/destaque
+    • Seguidores de lojas
+    • Sistema de planos com limites
   
-  📊 PERSISTÊNCIA DE DADOS:
-  • Todas as imagens salvas no banco como BYTEA
-  • Nenhuma perda de dados ao reiniciar o servidor
-  • Backup automático de arquivos temporários
-  • Otimização automática de imagens com Sharp
-  
-  ✅ TODAS AS FUNCIONALIDADES 100% FUNCIONAIS!
-  ✅ SEM ERROS, SEM SIMPLIFICAÇÕES
-  ✅ SISTEMA PRONTO PARA PRODUÇÃO
+  💡 Dica: Acesse /admin/migrar-planos para configurar planos
   
   ====================================================
   `);
 });
 
 // Tratamento de encerramento gracioso
-const gracefulShutdown = (signal) => {
-  console.log(`\n🛑 Recebido sinal ${signal}, encerrando servidor...`);
-  
+process.on('SIGTERM', () => {
+  console.log('🛑 Recebido sinal SIGTERM, encerrando servidor...');
   server.close(() => {
-    console.log('✅ Servidor HTTP encerrado');
-    
-    // Limpar arquivos temporários antes de sair
-    const tempDir = 'tmp/uploads/';
-    if (fsSync.existsSync(tempDir)) {
-      try {
-        fsSync.rmSync(tempDir, { recursive: true, force: true });
-        console.log('✅ Diretório temporário limpo');
-      } catch (cleanError) {
-        console.error('Erro ao limpar diretório temporário:', cleanError.message);
-      }
-    }
-    
+    console.log('✅ Servidor encerrado com sucesso');
     process.exit(0);
   });
-  
-  // Forçar encerramento após 10 segundos
-  setTimeout(() => {
-    console.error('❌ Tempo limite excedido, forçando encerramento...');
-    process.exit(1);
-  }, 10000);
-};
+});
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGINT', () => {
+  console.log('🛑 Recebido sinal SIGINT, encerrando servidor...');
+  server.close(() => {
+    console.log('✅ Servidor encerrado com sucesso');
+    process.exit(0);
+  });
+});
 
 // Tratamento de erros não capturados
 process.on('uncaughtException', (err) => {
-  console.error('❌ ERRO NÃO CAPTURADO:', err.message);
-  console.error('Stack trace:', err.stack);
-  
-  // Tentar limpar recursos antes de sair
-  try {
-    if (server && server.close) {
-      server.close();
-    }
-  } catch (closeError) {
-    console.error('Erro ao fechar servidor:', closeError.message);
-  }
-  
+  console.error('❌ Erro não capturado:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ PROMESSA REJEITADA NÃO TRATADA:', reason);
-  console.error('Promise:', promise);
+  console.error('❌ Promessa rejeitada não tratada:', reason);
 });
 
 module.exports = app;
