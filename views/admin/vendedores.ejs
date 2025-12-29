@@ -2,7 +2,12 @@
 <html lang="pt-AO">
 <head>
   <meta charset="UTF-8">
+  <title>Gerenciar Vendedores - KuandaShop</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- Font Awesome para ícones -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
   <style>
     /* =========================================
        KUANDA MERCHANT MANAGER CSS
@@ -14,7 +19,7 @@
       --card-radius: 20px;
     }
 
-    body { background-color: var(--bg-soft); }
+    body { background-color: var(--bg-soft); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
 
     /* 1. HEADER */
     .merchant-header {
@@ -27,15 +32,15 @@
     }
     .badge-count {
       background: var(--k-black); color: white; font-size: 0.9rem; padding: 5px 12px;
-      border-radius: 20px; font-weight: 700;
+      border-radius: 20px; font-weight: 700; vertical-align: middle;
     }
 
     .btn-back {
       background: white; border: 1px solid #ddd; color: #555;
       padding: 12px 20px; border-radius: 50px; font-weight: 600;
-      transition: 0.3s; text-decoration: none;
+      transition: 0.3s; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
     }
-    .btn-back:hover { background: #f5f5f5; color: var(--k-black); }
+    .btn-back:hover { background: #f5f5f5; color: var(--k-black); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
 
     /* 2. STATS ROW */
     .stats-row {
@@ -47,9 +52,12 @@
       background: white; border-radius: 16px; padding: 20px;
       box-shadow: 0 5px 20px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.03);
       display: flex; align-items: center; justify-content: space-between;
+      transition: transform 0.3s ease;
     }
+    .stat-box:hover { transform: translateY(-5px); }
+
     .stat-content h4 { font-size: 1.8rem; font-weight: 800; margin: 0; line-height: 1; }
-    .stat-content span { font-size: 0.8rem; font-weight: 600; color: #888; text-transform: uppercase; }
+    .stat-content span { font-size: 0.8rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
     
     .stat-icon {
       width: 50px; height: 50px; border-radius: 12px;
@@ -81,7 +89,7 @@
     .table-pro th {
       background: #FAFAFA; color: #888; font-size: 0.75rem; font-weight: 800;
       text-transform: uppercase; padding: 20px 25px; text-align: left;
-      border-bottom: 1px solid #eee; letter-spacing: 0.5px;
+      border-bottom: 1px solid #eee; letter-spacing: 0.5px; white-space: nowrap;
     }
     .table-pro td {
       padding: 20px 25px; border-bottom: 1px solid #f9f9f9; vertical-align: middle;
@@ -98,11 +106,12 @@
     }
     .v-placeholder {
       width: 45px; height: 45px; border-radius: 12px; background: var(--k-black); color: white;
-      display: flex; align-items: center; justify-content: center; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.2rem;
     }
     
     .v-info h6 { font-weight: 700; margin: 0; color: var(--k-black); font-size: 0.95rem; }
-    .v-info small { font-size: 0.8rem; color: #888; }
+    .v-info small { font-size: 0.8rem; color: #888; display: block; }
+    .v-email { font-size: 0.75rem; color: #aaa; }
 
     /* Badges */
     .badge-status {
@@ -114,8 +123,20 @@
     
     .badge-prod {
       background: #EBF5FF; color: #3B82F6; padding: 5px 10px; border-radius: 8px;
-      font-weight: 700; font-size: 0.8rem;
+      font-weight: 700; font-size: 0.8rem; white-space: nowrap;
     }
+
+    /* Form Limit */
+    .limit-form { display: flex; align-items: center; gap: 5px; }
+    .limit-input {
+        width: 70px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 8px;
+        font-size: 0.9rem; text-align: center;
+    }
+    .btn-save {
+        background: none; border: none; cursor: pointer; color: #3B82F6;
+        font-size: 1.1rem; padding: 5px; transition: 0.2s;
+    }
+    .btn-save:hover { color: #2563EB; transform: scale(1.1); }
 
     /* Ações */
     .action-group { display: flex; gap: 8px; }
@@ -150,7 +171,7 @@
   <!-- 1. HEADER -->
   <div class="merchant-header fade-up">
     <h2 class="page-title">
-        <i class="fas fa-store-alt text-primary"></i> Gerenciar Vendedores
+        <i class="fas fa-store-alt text-danger"></i> Gerenciar Vendedores
         <span class="badge-count"><%= vendedores.length %></span>
     </h2>
     <a href="/admin" class="btn-back">
@@ -202,26 +223,6 @@
         </div>
     </div>
 
-    <!-- Adicione esta coluna na tabela de vendedores -->
-<td>
-  <form action="/admin/vendedor/<%= vendedor.id %>/atualizar-limite" method="POST" class="d-inline">
-    <div class="input-group input-group-sm">
-      <input type="number" 
-             name="limite_produtos" 
-             value="<%= vendedor.limite_produtos || 10 %>"
-             min="1" 
-             max="1000"
-             class="form-control" 
-             style="width: 80px">
-      <button type="submit" class="btn btn-sm btn-outline-primary">
-        <i class="fas fa-save"></i>
-      </button>
-    </div>
-  </form>
-  <small class="d-block text-muted mt-1">
-    Usado: <%= vendedor.total_produtos || 0 %>/<%= vendedor.limite_produtos || 10 %>
-  </small>
-</td>
     <!-- 3. TABELA DE VENDEDORES -->
     <div class="merchant-card fade-up" style="animation-delay: 0.2s;">
       <div class="table-responsive">
@@ -233,6 +234,7 @@
               <th>Catálogo</th>
               <th>Reputação</th>
               <th>Status</th>
+              <th>Limite Prod.</th>
               <th>Desde</th>
               <th>Ações</th>
             </tr>
@@ -245,11 +247,11 @@
                   <div class="vendor-cell">
                     <!-- Avatar Logic -->
                     <% 
-                    let foto = vendedor.foto_perfil || '';
+                    let foto = vendedor.foto_perfil_id ? `/imagem/${vendedor.foto_perfil_id}` : null;
                     let nome = vendedor.nome || 'Vendedor';
                     %>
                     <% if (foto) { %>
-                        <img src="/uploads/perfil/<%= foto %>" class="v-avatar" onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name=<%= nome.charAt(0) %>&background=0F0F0F&color=fff';">
+                        <img src="<%= foto %>" class="v-avatar">
                     <% } else { %>
                         <div class="v-placeholder"><%= nome.charAt(0).toUpperCase() %></div>
                     <% } %>
@@ -257,7 +259,7 @@
                     <div class="v-info">
                         <h6><%= nome %></h6>
                         <small><%= vendedor.nome_loja || 'Loja Sem Nome' %></small>
-                        <div class="small text-muted"><%= vendedor.email %></div>
+                        <div class="v-email"><%= vendedor.email %></div>
                     </div>
                   </div>
                 </td>
@@ -281,7 +283,7 @@
                     <% if (vendedor.media_classificacao) { %>
                         <div class="text-warning fw-bold small">
                             <i class="fas fa-star"></i> <%= parseFloat(vendedor.media_classificacao).toFixed(1) %>
-                            <span class="text-muted fw-normal">(<%= vendedor.total_avaliacoes %>)</span>
+                            <span class="text-muted fw-normal">(<%= vendedor.total_avaliacoes || 0 %>)</span>
                         </div>
                     <% } else { %>
                         <span class="text-muted small">Novo</span>
@@ -295,6 +297,24 @@
                     <% } else { %>
                         <span class="badge-status bs-inactive"><i class="fas fa-times"></i> Inativa</span>
                     <% } %>
+                </td>
+
+                <!-- Limite (AQUI ESTAVA O ERRO, AGORA CORRIGIDO) -->
+                <td>
+                    <form action="/admin/vendedor/<%= vendedor.id %>/atualizar-limite" method="POST" class="limit-form">
+                        <input type="number" 
+                               name="limite_produtos" 
+                               value="<%= vendedor.limite_produtos || 10 %>"
+                               min="1" 
+                               max="1000"
+                               class="limit-input">
+                        <button type="submit" class="btn-save" title="Salvar Limite">
+                            <i class="fas fa-save"></i>
+                        </button>
+                    </form>
+                    <small class="text-muted" style="font-size: 0.75rem; margin-top: 4px; display: block;">
+                        Usado: <%= vendedor.total_produtos || 0 %>/<%= vendedor.limite_produtos || 10 %>
+                    </small>
                 </td>
 
                 <!-- Data -->
@@ -346,20 +366,14 @@
     });
   });
 
-  // 2. Toast Helper (Global)
-  function showToast(msg, type) {
-    const div = document.createElement('div');
-    const bg = type === 'success' ? '#10B981' : '#EF4444';
-    div.style.cssText = `position:fixed; top:20px; right:20px; z-index:9999; background:${bg}; color:white; padding:12px 25px; border-radius:12px; font-weight:600; box-shadow:0 10px 30px rgba(0,0,0,0.2); animation: slideIn 0.3s ease;`;
-    div.innerHTML = `<i class="fas fa-${type==='success'?'check':'exclamation'}-circle me-2"></i> ${msg}`;
-    document.body.appendChild(div);
-    setTimeout(() => div.remove(), 3000);
-  }
-
-  // Keyframes
-  const style = document.createElement('style');
-  style.textContent = `@keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} } @keyframes fadeUp { from{opacity:0; transform:translateY(20px)} to{opacity:1; transform:translateY(0)} }`;
-  document.head.appendChild(style);
+  // 2. Animação simples ao carregar
+  document.addEventListener("DOMContentLoaded", () => {
+    const rows = document.querySelectorAll('tbody tr');
+    rows.forEach((row, index) => {
+        row.style.opacity = '0';
+        row.style.animation = `fadeUp 0.3s ease forwards ${index * 0.05 + 0.3}s`;
+    });
+  });
 </script>
 
 </body>
