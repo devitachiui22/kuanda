@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* =========================================
+           KUANDA GAME MANAGER CSS
+           ========================================= */
+        :root {
+            --g-bg: #09090b;
+            --g-card: #18181b;
+            --g-hover: #27272a;
+            --g-border: rgba(255, 255, 255, 0.1);
+            --g-neon: #00f2ea;
+            --g-red: #E31C25;
+            --g-text: #e4e4e7;
+        }
+
+        body { background-color: #F3F4F6; } /* Mantém o fundo do layout admin */
+
+        /* Container Principal Escuro */
+        .manager-wrapper {
+            background-color: var(--g-bg);
+            color: var(--g-text);
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            min-height: 80vh;
+            margin-top: 20px;
+        }
+
+        /* Header */
+        .manager-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid var(--g-border);
+        }
+        .page-title {
+            font-weight: 800; font-size: 1.8rem; margin: 0;
+            display: flex; align-items: center; gap: 12px;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .count-badge {
+            background: var(--g-hover); color: var(--g-neon); padding: 5px 12px;
+            border-radius: 20px; font-size: 0.8rem; border: 1px solid var(--g-neon);
+        }
+
+        .btn-add-game {
+            background: var(--g-neon); color: black; border: none;
+            padding: 12px 25px; border-radius: 50px; font-weight: 800;
+            text-decoration: none; display: flex; align-items: center; gap: 8px;
+            transition: 0.3s; box-shadow: 0 0 15px rgba(0, 242, 234, 0.3);
+        }
+        .btn-add-game:hover { background: white; transform: translateY(-3px); box-shadow: 0 0 25px rgba(0, 242, 234, 0.5); color: black; }
+
+        /* Lista de Jogos (Custom Table) */
+        .game-list { display: flex; flex-direction: column; gap: 15px; }
+
+        .game-row {
+            background: var(--g-card); border: 1px solid var(--g-border);
+            border-radius: 16px; padding: 15px;
+            display: grid; grid-template-columns: auto 1fr auto auto auto;
+            align-items: center; gap: 25px;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        .game-row:hover {
+            transform: scale(1.01); border-color: rgba(255,255,255,0.3);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3); background: var(--g-hover);
+        }
+
+        /* Colunas */
+        .col-cover { width: 50px; height: 75px; position: relative; border-radius: 8px; overflow: hidden; background: #000; flex-shrink: 0; }
+        .col-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+        .col-info h5 { margin: 0 0 5px; font-weight: 700; color: white; font-size: 1.1rem; }
+        .col-info span { color: #888; font-size: 0.8rem; font-family: monospace; }
+        
+        .col-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 100px; }
+        .price-tag { font-weight: 700; color: var(--g-neon); font-size: 1rem; }
+        .plat-badge { 
+            background: #000; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; 
+            font-weight: 700; border: 1px solid #333; text-transform: uppercase;
+        }
+
+        .col-status { text-align: center; min-width: 100px; }
+        .status-pill {
+            padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .st-on { background: rgba(16, 185, 129, 0.1); color: #10B981; border: 1px solid #10B981; }
+        .st-off { background: rgba(239, 68, 68, 0.1); color: #EF4444; border: 1px solid #EF4444; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+
+        .col-actions { display: flex; gap: 10px; }
+        .btn-act {
+            width: 38px; height: 38px; border-radius: 10px; border: none;
+            display: flex; align-items: center; justify-content: center;
+            transition: 0.2s; cursor: pointer; color: #fff; background: rgba(255,255,255,0.05);
+        }
+        .btn-act:hover { background: white; color: black; transform: scale(1.1); }
+        .btn-del:hover { background: var(--g-red); color: white; }
+
+        /* Empty State */
+        .empty-games {
+            text-align: center; padding: 80px 20px;
+            border: 2px dashed var(--g-border); border-radius: 20px;
+        }
+        .empty-icon { font-size: 3rem; color: #333; margin-bottom: 20px; }
+
+        /* Animation */
+        .fade-in { animation: fadeIn 0.5s ease forwards; opacity: 0; transform: translateY(10px); }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .game-row { grid-template-columns: auto 1fr; grid-template-rows: auto auto auto; gap: 15px; }
+            .col-cover { grid-row: span 2; }
+            .col-info { grid-column: 2; }
+            .col-meta { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; border-top: 1px solid #333; padding-top: 10px; }
+            .col-status { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+            .col-actions { margin-left: auto; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container py-4">
+    
+    <div class="manager-wrapper">
+        
+        <!-- HEADER -->
+        <div class="manager-header">
+            <div>
+                <h2 class="page-title">
+                    <i class="fas fa-gamepad text-danger"></i> Catálogo de Jogos
+                    <span class="count-badge ms-3"><%= jogos.length %> títulos</span>
+                </h2>
+            </div>
+            <a href="/admin/jogos/novo" class="btn-add-game">
+                <i class="fas fa-plus"></i> <span class="d-none d-md-inline">Adicionar Jogo</span>
+            </a>
+        </div>
+
+        <!-- LISTA -->
+        <div class="game-list">
+            
+            <% if (jogos.length === 0) { %>
+                <div class="empty-games fade-in">
+                    <i class="fas fa-ghost empty-icon"></i>
+                    <h4 class="fw-bold text-muted">Nenhum jogo instalado</h4>
+                    <p class="text-muted mb-4">Adicione chaves ou jogos para começar a vender.</p>
+                </div>
+            <% } else { %>
+                
+                <% jogos.forEach((jogo, index) => { %>
+                    <div class="game-row fade-in" style="animation-delay: <%= index * 0.05 %>s;">
+                        
+                        <!-- 1. Capa -->
+                        <div class="col-cover">
+                            <% if (jogo.capa) { %>
+                                <img src="/uploads/games/<%= jogo.capa %>" alt="<%= jogo.titulo %>" onerror="this.src='https://via.placeholder.com/100x150/111/fff?text=IMG'">
+                            <% } else { %>
+                                <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#333;"><i class="fas fa-image"></i></div>
+                            <% } %>
+                        </div>
+
+                        <!-- 2. Info -->
+                        <div class="col-info">
+                            <h5><%= jogo.titulo %></h5>
+                            <span>Adicionado em: <%= new Date(jogo.created_at).toLocaleDateString('pt-BR') %></span>
+                        </div>
+
+                        <!-- 3. Preço e Plataforma -->
+                        <div class="col-meta">
+                            <span class="plat-badge"><%= jogo.plataforma %></span>
+                            <span class="price-tag">
+                                <%= Number(jogo.preco) === 0 ? 'GRÁTIS' : Number(jogo.preco).toLocaleString('pt-AO') + ' Kz' %>
+                            </span>
+                        </div>
+
+                        <!-- 4. Status -->
+                        <div class="col-status">
+                            <% if(jogo.ativo) { %>
+                                <span class="status-pill st-on"><span class="status-dot"></span> Ativo</span>
+                            <% } else { %>
+                                <span class="status-pill st-off"><span class="status-dot"></span> Inativo</span>
+                            <% } %>
+                        </div>
+
+                        <!-- 5. Ações -->
+                        <div class="col-actions">
+                            <a href="/admin/jogos/<%= jogo.id %>/editar" class="btn-act" title="Editar">
+                                <i class="fas fa-pen"></i>
+                            </a>
+                            
+                            <!-- Botão Delete usando a rota corrigida do server.js -->
+                            <form action="/admin/jogos/<%= jogo.id %>?_method=DELETE" method="POST" class="m-0 d-inline delete-form">
+                                <button type="submit" class="btn-act btn-del" title="Excluir">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+
+                    </div>
+                <% }) %>
+
+            <% } %>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // Confirmação de Exclusão estilizada
+    document.querySelectorAll('.delete-form').forEach(form => {
+        form.addEventListener('submit', function(e) {
+            if (!confirm('ATENÇÃO: Tem certeza que deseja excluir este jogo? Esta ação não pode ser desfeita.')) {
+                e.preventDefault();
+            }
+        });
+    });
+</script>
+
+</body>
+</html>

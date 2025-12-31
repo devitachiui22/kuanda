@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* =========================================
+       KUANDA PRODUCT SHOWCASE CSS
+       ========================================= */
+    :root {
+      --k-red: #E31C25;
+      --k-black: #0F0F0F;
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      --shadow-float: 0 10px 40px rgba(0,0,0,0.08);
+    }
+
+    /* 1. BREADCRUMB */
+    .breadcrumb-custom {
+      background: transparent; padding: 0; margin-bottom: 20px;
+    }
+    .breadcrumb-item a { color: #888; text-decoration: none; font-weight: 500; font-size: 0.9rem; }
+    .breadcrumb-item.active { color: var(--k-black); font-weight: 700; }
+
+    /* 2. GALERIA DE IMAGENS (INSTAGRAM READY) */
+    .product-gallery-wrapper {
+      position: sticky; top: 100px;
+    }
+
+    .main-image-frame {
+      width: 100%;
+      aspect-ratio: 1 / 1; /* Formato Quadrado (Instagram) */
+      background: white;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      position: relative;
+      box-shadow: var(--shadow-float);
+      border: 1px solid rgba(0,0,0,0.03);
+      cursor: zoom-in;
+    }
+
+    .main-img {
+      width: 100%; height: 100%;
+      object-fit: contain; /* Mostra a imagem inteira sem cortar */
+      background-color: #fff; /* Fundo branco para imagens PNG/Transparentes */
+      transition: transform 0.3s ease;
+    }
+    
+    /* Efeito de Zoom ao passar o mouse */
+    .main-image-frame:hover .main-img {
+      transform: scale(1.1);
+    }
+
+    .thumbs-row {
+      display: flex; gap: 10px; margin-top: 15px; overflow-x: auto; padding-bottom: 5px;
+    }
+    .thumbs-row::-webkit-scrollbar { height: 4px; }
+    .thumbs-row::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+    .thumb-item {
+      width: 80px; height: 80px; flex-shrink: 0;
+      border-radius: 12px; border: 2px solid transparent;
+      overflow: hidden; cursor: pointer; opacity: 0.7; transition: 0.2s;
+      background: white;
+    }
+    .thumb-item.active {
+      border-color: var(--k-black); opacity: 1; transform: translateY(-2px);
+    }
+    .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* 3. INFORMAÇÕES DO PRODUTO (DIREITA) */
+    .product-info-col {
+      padding-left: 20px;
+    }
+
+    .prod-badges { display: flex; gap: 10px; margin-bottom: 15px; }
+    .badge-pill {
+      padding: 6px 12px; border-radius: 30px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .badge-vip { background: #000; color: #FFD700; }
+    .badge-cat { background: #f0f0f0; color: #666; }
+
+    .product-title-main {
+      font-size: 2.2rem; font-weight: 800; line-height: 1.2; color: var(--k-black); margin-bottom: 15px;
+    }
+
+    .product-rating-row {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 25px;
+      font-size: 0.9rem;
+    }
+    .stars-display { color: #FFC107; }
+
+    .price-block {
+      background: #F9FAFB; padding: 20px; border-radius: 20px; margin-bottom: 30px;
+      border: 1px solid rgba(0,0,0,0.03);
+    }
+    .current-price { font-size: 2.5rem; font-weight: 800; color: var(--k-red); line-height: 1; }
+    .old-price { font-size: 1.1rem; text-decoration: line-through; color: #999; margin-left: 10px; }
+    .discount-tag {
+      background: #E8FDF0; color: #10B981; padding: 4px 8px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; vertical-align: middle; margin-left: 10px;
+    }
+
+    .stock-status { font-size: 0.9rem; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+    .stock-dot { width: 10px; height: 10px; border-radius: 50%; background: #10B981; }
+
+    /* Botões de Ação */
+    .action-buttons { display: grid; gap: 15px; }
+    
+    .btn-add-main {
+      background: var(--k-black); color: white; border: none;
+      padding: 18px; border-radius: 16px; font-size: 1.1rem; font-weight: 700;
+      width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+      transition: 0.3s; box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+    }
+    .btn-add-main:hover { background: #333; transform: translateY(-2px); color: white; }
+    
+    .btn-whatsapp-buy {
+      background: #25D366; color: white; border: none;
+      padding: 15px; border-radius: 16px; font-weight: 700; width: 100%;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      transition: 0.3s;
+    }
+    .btn-whatsapp-buy:hover { background: #1da851; color: white; }
+
+    /* Descrição */
+    .desc-box { margin-top: 40px; }
+    .desc-title { font-weight: 800; font-size: 1.2rem; margin-bottom: 15px; }
+    .desc-text { color: #555; line-height: 1.7; font-size: 1rem; }
+
+    /* 4. CARTÃO DO VENDEDOR (SELLER CARD) */
+    .seller-card-row {
+      background: white; border-radius: var(--radius-lg); padding: 25px;
+      box-shadow: var(--shadow-float); margin-top: 60px;
+      display: flex; align-items: center; gap: 20px;
+      border: 1px solid rgba(0,0,0,0.03);
+    }
+    
+    .seller-avatar {
+      width: 80px; height: 80px; border-radius: 50%; object-fit: cover;
+      border: 3px solid #f0f0f0;
+    }
+    
+    .seller-info h5 { font-weight: 800; margin: 0; color: var(--k-black); }
+    .seller-btn {
+      margin-left: auto; border: 2px solid var(--k-black); color: var(--k-black);
+      background: transparent; padding: 8px 20px; border-radius: 30px; font-weight: 700;
+      text-decoration: none; transition: 0.2s;
+    }
+    .seller-btn:hover { background: var(--k-black); color: white; }
+
+    /* 5. AVALIAÇÕES */
+    .reviews-section { margin-top: 60px; }
+    .review-summary {
+      background: #fcfcfc; padding: 30px; border-radius: var(--radius-lg); text-align: center;
+      border: 1px solid #eee; height: 100%;
+    }
+    .rating-big { font-size: 3.5rem; font-weight: 800; color: var(--k-black); line-height: 1; }
+    
+    .progress-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .progress-bar-bg { flex-grow: 1; height: 6px; background: #eee; border-radius: 10px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #FFC107; border-radius: 10px; }
+
+    .user-review-card {
+      padding: 20px 0; border-bottom: 1px solid #eee;
+    }
+    .reviewer-avatar { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
+
+    /* 6. SIMILARES */
+    .similar-section { margin-top: 80px; margin-bottom: 40px; }
+    .similar-card {
+        border-radius: 16px; overflow: hidden; background: white;
+        transition: 0.3s; border: 1px solid #f0f0f0;
+    }
+    .similar-card:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.05); }
+    .similar-img { height: 180px; width: 100%; object-fit: cover; }
+
+    /* RESPONSIVO */
+    @media (max-width: 991px) {
+      .product-info-col { padding-left: 0; margin-top: 30px; }
+      .product-gallery-wrapper { position: static; }
+      .seller-card-row { flex-direction: column; text-align: center; }
+      .seller-btn { margin-left: 0; width: 100%; text-align: center; }
+      .product-title-main { font-size: 1.8rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container py-4">
+  
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb breadcrumb-custom">
+      <li class="breadcrumb-item"><a href="/">Início</a></li>
+      <li class="breadcrumb-item"><a href="/produtos">Produtos</a></li>
+      <li class="breadcrumb-item active" aria-current="page"><%= produto.nome %></li>
+    </ol>
+  </nav>
+
+  <!-- PRODUTO MAIN GRID -->
+  <div class="row">
+    
+    <!-- COLUNA ESQUERDA: GALERIA -->
+    <div class="col-lg-6">
+      <div class="product-gallery-wrapper fade-in">
+        
+        <!-- Logic para Imagens -->
+        <% 
+        const imagens = [];
+        if (produto.imagem1) imagens.push(produto.imagem1);
+        if (produto.imagem2) imagens.push(produto.imagem2);
+        if (produto.imagem3) imagens.push(produto.imagem3);
+        
+        // Imagem Principal Inicial
+        const mainImg = imagens.length > 0 ? '/uploads/produtos/' + imagens[0] : 'https://via.placeholder.com/600x600?text=Sem+Imagem';
+        %>
+
+        <!-- Imagem Principal (Square 1:1) -->
+        <div class="main-image-frame" id="mainImageContainer">
+            <img src="<%= mainImg %>" class="main-img" id="mainDisplayImage" alt="<%= produto.nome %>">
+            <div class="position-absolute bottom-0 end-0 m-3">
+                <button class="btn btn-light rounded-circle shadow-sm" onclick="expandImage()"><i class="fas fa-expand"></i></button>
+            </div>
+        </div>
+
+        <!-- Thumbnails -->
+        <% if (imagens.length > 1) { %>
+            <div class="thumbs-row">
+                <% imagens.forEach((img, idx) => { %>
+                    <div class="thumb-item <%= idx===0 ? 'active' : '' %>" onclick="changeImage('/uploads/produtos/<%= img %>', this)">
+                        <img src="/uploads/produtos/<%= img %>" alt="View <%= idx+1 %>">
+                    </div>
+                <% }) %>
+            </div>
+        <% } %>
+
+      </div>
+    </div>
+
+    <!-- COLUNA DIREITA: INFORMAÇÕES -->
+    <div class="col-lg-6 product-info-col fade-in" style="animation-delay: 0.1s;">
+        
+        <!-- Badges -->
+        <div class="prod-badges">
+            <span class="badge-pill badge-cat"><%= produto.categoria_nome || 'Geral' %></span>
+            <% if (produto.vip) { %><span class="badge-pill badge-vip"><i class="fas fa-crown me-1"></i>VIP</span><% } %>
+        </div>
+
+        <!-- Título -->
+        <h1 class="product-title-main"><%= produto.nome %></h1>
+
+        <!-- Rating -->
+        <div class="product-rating-row">
+            <div class="stars-display">
+                <% const media = Math.round(Number(produto.media_classificacao) || 0); %>
+                <% for(let i=1; i<=5; i++) { %>
+                    <i class="<%= i <= media ? 'fas' : 'far' %> fa-star"></i>
+                <% } %>
+            </div>
+            <a href="#reviews" class="text-muted text-decoration-underline"><%= produto.total_avaliacoes || 0 %> avaliações</a>
+            <span class="text-muted border-start ps-2 ml-2">SKU: <%= produto.id %></span>
+        </div>
+
+        <!-- Preço e Oferta -->
+        <% 
+        const preco = Number(produto.preco) || 0;
+        const promo = Number(produto.preco_promocional) || 0;
+        const temPromo = promo > 0;
+        const economia = temPromo ? Math.round(((preco - promo) / preco) * 100) : 0;
+        %>
+        
+        <div class="price-block">
+            <div class="d-flex align-items-center">
+                <span class="current-price"><%= (temPromo ? promo : preco).toLocaleString('pt-AO') %> Kz</span>
+                <% if (temPromo) { %>
+                    <span class="old-price"><%= preco.toLocaleString('pt-AO') %></span>
+                    <span class="discount-tag">Economize <%= economia %>%</span>
+                <% } %>
+            </div>
+            <p class="text-muted small mb-0 mt-2">Pagamento seguro na entrega ou transferência.</p>
+        </div>
+
+        <!-- Estoque -->
+        <div class="stock-status">
+            <% if ((produto.estoque || 0) > 0) { %>
+                <div class="stock-dot"></div>
+                <span class="text-success fw-bold">Em Estoque (<%= produto.estoque %>)</span>
+            <% } else { %>
+                <div class="stock-dot bg-danger"></div>
+                <span class="text-danger fw-bold">Esgotado</span>
+            <% } %>
+        </div>
+
+        <!-- Ações -->
+        <div class="action-buttons">
+            <button class="btn-add-main" onclick="addToCart(<%= produto.id %>, '<%= produto.nome.replace(/'/g, "\\'") %>')">
+                <i class="fas fa-shopping-bag"></i> Adicionar ao Carrinho
+            </button>
+            
+            <% if (produto.loja_telefone) { %>
+                <a href="https://wa.me/<%= produto.loja_telefone.replace(/\D/g, '') %>?text=Olá, tenho interesse no produto: <%= encodeURIComponent(produto.nome) %>" target="_blank" class="btn-whatsapp-buy">
+                    <i class="fab fa-whatsapp fs-5"></i> Conversar com Vendedor
+                </a>
+            <% } %>
+        </div>
+
+        <!-- Descrição -->
+        <div class="desc-box">
+            <h5 class="desc-title">Sobre o Produto</h5>
+            <div class="desc-text">
+                <%= produto.descricao || 'Sem descrição detalhada disponível.' %>
+            </div>
+        </div>
+
+    </div>
+  </div>
+
+  <!-- SEÇÃO DO VENDEDOR (SELLER CARD) -->
+  <div class="row justify-content-center fade-in">
+      <div class="col-lg-10">
+          <div class="seller-card-row">
+              <!-- Lógica de Imagem do Vendedor -->
+              <% 
+              let vendFoto = produto.vendedor_foto || produto.loja_foto || '';
+              let vendNome = produto.nome_loja || 'Loja Parceira';
+              %>
+              
+              <% if (vendFoto) { %>
+                  <img src="/uploads/perfil/<%= vendFoto %>" class="seller-avatar" onerror="this.src='https://ui-avatars.com/api/?name=<%= vendNome.charAt(0) %>&background=000&color=fff';">
+              <% } else { %>
+                  <img src="https://ui-avatars.com/api/?name=<%= vendNome.charAt(0) %>&background=000&color=fff" class="seller-avatar">
+              <% } %>
+
+              <div class="seller-info">
+                  <small class="text-muted text-uppercase fw-bold">Vendido por</small>
+                  <h5><%= vendNome %> <i class="fas fa-check-circle text-primary small"></i></h5>
+                  <p class="mb-0 text-muted small">
+                    <i class="fas fa-calendar-alt me-1"></i> No Kuanda desde <%= produto.loja_desde ? new Date(produto.loja_desde).getFullYear() : '2024' %>
+                  </p>
+              </div>
+
+              <a href="/loja/<%= produto.vendedor_id %>" class="seller-btn">
+                  Visitar Loja
+              </a>
+          </div>
+      </div>
+  </div>
+
+  <!-- AVALIAÇÕES E REVIEWS -->
+  <div class="row mt-5" id="reviews">
+      <div class="col-12"><h3 class="fw-bold mb-4">Avaliações dos Clientes</h3></div>
+      
+      <!-- Resumo -->
+      <div class="col-lg-4 mb-4">
+          <div class="review-summary">
+              <div class="rating-big"><%= parseFloat(produto.media_classificacao || 0).toFixed(1) %></div>
+              <div class="text-warning mb-2">
+                  <% for(let i=1; i<=5; i++) { %>
+                      <i class="<%= i <= Math.round(produto.media_classificacao) ? 'fas' : 'far' %> fa-star"></i>
+                  <% } %>
+              </div>
+              <p class="text-muted"><%= produto.total_avaliacoes || 0 %> avaliações globais</p>
+              
+              <!-- Barras de Progresso (Fake Data Based or Real) -->
+              <% 
+                // Exemplo de distribuição simples
+                let total = produto.total_avaliacoes || 1;
+                let dist = [0,0,0,0,0]; // 1 a 5 estrelas
+                if(avaliacoes) avaliacoes.forEach(a => { if(a.classificacao >=1 && a.classificacao <=5) dist[a.classificacao-1]++ });
+              %>
+              <div class="mt-4 text-start">
+                  <% for(let i=5; i>=1; i--) { 
+                     let pct = (dist[i-1] / total) * 100;
+                  %>
+                      <div class="progress-row">
+                          <small class="fw-bold" style="width:20px"><%= i %></small> <i class="fas fa-star text-warning small me-2"></i>
+                          <div class="progress-bar-bg"><div class="progress-fill" style="width: <%= pct %>%"></div></div>
+                          <small class="text-muted ms-2"><%= dist[i-1] %></small>
+                      </div>
+                  <% } %>
+              </div>
+
+              <% if(user) { %>
+                  <button class="btn btn-outline-dark w-100 rounded-pill mt-4" data-bs-toggle="modal" data-bs-target="#reviewModal">Escrever Avaliação</button>
+              <% } else { %>
+                  <a href="/login" class="btn btn-outline-dark w-100 rounded-pill mt-4">Login para Avaliar</a>
+              <% } %>
+          </div>
+      </div>
+
+      <!-- Lista de Comentários -->
+      <div class="col-lg-8">
+          <div class="card border-0 shadow-sm p-4 rounded-4">
+              <% if (avaliacoes && avaliacoes.length > 0) { %>
+                  <% avaliacoes.forEach(av => { %>
+                      <div class="user-review-card">
+                          <div class="d-flex justify-content-between mb-2">
+                              <div class="d-flex align-items-center gap-3">
+                                  <% let uFoto = av.foto_perfil || av.avatar; %>
+                                  <% if(uFoto) { %>
+                                      <img src="/uploads/perfil/<%= uFoto %>" class="reviewer-avatar" onerror="this.src='https://ui-avatars.com/api/?name=User';">
+                                  <% } else { %>
+                                      <img src="https://ui-avatars.com/api/?name=<%= av.nome ? av.nome.charAt(0) : 'U' %>" class="reviewer-avatar">
+                                  <% } %>
+                                  <div>
+                                      <h6 class="mb-0 fw-bold"><%= av.nome || 'Cliente' %></h6>
+                                      <div class="text-warning small">
+                                          <% for(let i=1; i<=5; i++) { %>
+                                              <i class="<%= i <= av.classificacao ? 'fas' : 'far' %> fa-star"></i>
+                                          <% } %>
+                                      </div>
+                                  </div>
+                              </div>
+                              <small class="text-muted"><%= new Date(av.created_at).toLocaleDateString() %></small>
+                          </div>
+                          <p class="text-muted mb-0 ps-5 ms-2"><%= av.comentario %></p>
+                      </div>
+                  <% }) %>
+              <% } else { %>
+                  <div class="text-center py-5">
+                      <i class="far fa-comment-dots fa-3x text-light mb-3" style="color: #ccc !important;"></i>
+                      <p class="text-muted">Ainda não há avaliações para este produto.</p>
+                  </div>
+              <% } %>
+          </div>
+      </div>
+  </div>
+
+  <!-- PRODUTOS SIMILARES -->
+  <% if (produtosSimilares && produtosSimilares.length > 0) { %>
+      <div class="similar-section fade-in">
+          <h3 class="fw-bold mb-4">Você também pode gostar</h3>
+          <div class="row g-4">
+              <% produtosSimilares.forEach(sim => { %>
+                  <div class="col-6 col-md-3 col-lg-2">
+                      <div class="similar-card">
+                          <a href="/produto/<%= sim.id %>">
+                              <% if (sim.imagem1) { %>
+                                  <img src="/uploads/produtos/<%= sim.imagem1 %>" class="similar-img">
+                              <% } else { %>
+                                  <div class="similar-img bg-light d-flex align-items-center justify-content-center text-muted"><i class="fas fa-image"></i></div>
+                              <% } %>
+                          </a>
+                          <div class="p-2">
+                              <h6 class="text-truncate mb-1 small fw-bold"><a href="/produto/<%= sim.id %>" class="text-dark text-decoration-none"><%= sim.nome %></a></h6>
+                              <div class="fw-bold text-danger small"><%= Number(sim.preco).toLocaleString('pt-AO') %> Kz</div>
+                          </div>
+                      </div>
+                  </div>
+              <% }) %>
+          </div>
+      </div>
+  <% } %>
+
+</div>
+
+<!-- Modal de Avaliação -->
+<div class="modal fade" id="reviewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 rounded-4">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold">Avaliar Produto</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form action="/produto/<%= produto.id %>/avaliar" method="POST">
+            <div class="mb-3 text-center">
+                <label class="form-label">Sua nota</label>
+                <div class="rating-input display-6 text-warning" style="cursor: pointer;">
+                    <% for(let i=1; i<=5; i++) { %>
+                        <i class="far fa-star star-input" data-val="<%= i %>"></i>
+                    <% } %>
+                </div>
+                <input type="hidden" name="classificacao" id="ratingValue" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Comentário</label>
+                <textarea class="form-control bg-light border-0" name="comentario" rows="3" placeholder="O que achou do produto?"></textarea>
+            </div>
+            <button class="btn btn-dark w-100 rounded-pill">Enviar Avaliação</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    // 1. Galeria de Imagens
+    function changeImage(src, element) {
+        document.getElementById('mainDisplayImage').src = src;
+        
+        // Update Active Class
+        document.querySelectorAll('.thumb-item').forEach(el => el.classList.remove('active'));
+        element.classList.add('active');
+    }
+
+    // 2. Expandir Imagem (Lightbox Simples)
+    function expandImage() {
+        const src = document.getElementById('mainDisplayImage').src;
+        // Criar modal dinâmico simples
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; display:flex; align-items:center; justify-content:center; cursor:zoom-out;';
+        modal.innerHTML = `<img src="${src}" style="max-width:90%; max-height:90%; border-radius:10px; box-shadow:0 0 50px rgba(0,0,0,0.5);">`;
+        modal.onclick = () => modal.remove();
+        document.body.appendChild(modal);
+    }
+
+    // 3. Adicionar ao Carrinho
+    function addToCart(id, nome) {
+        const btn = document.querySelector('.btn-add-main');
+        const originalText = btn.innerHTML;
+        
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Adicionando...';
+        
+        fetch('/carrinho/adicionar', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: `produto_id=${id}&quantidade=1`
+        })
+        .then(r => r.json())
+        .then(data => {
+            if(data.success) {
+                btn.style.background = '#10B981';
+                btn.innerHTML = '<i class="fas fa-check"></i> Adicionado!';
+                if(window.CartManager) window.CartManager.updateCount();
+                setTimeout(() => {
+                    btn.style.background = '';
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }, 2000);
+            } else {
+                alert(data.message);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+    }
+
+    // 4. Input de Estrelas (Modal)
+    document.querySelectorAll('.star-input').forEach(star => {
+        star.addEventListener('click', function() {
+            const val = this.dataset.val;
+            document.getElementById('ratingValue').value = val;
+            
+            document.querySelectorAll('.star-input').forEach(s => {
+                if(s.dataset.val <= val) {
+                    s.classList.remove('far');
+                    s.classList.add('fas');
+                } else {
+                    s.classList.remove('fas');
+                    s.classList.add('far');
+                }
+            });
+        });
+    });
+
+    // 5. Animação Scroll
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if(entry.isIntersecting) {
+                entry.target.style.animation = 'fadeInUp 0.6s ease forwards';
+                observer.unobserve(entry.target);
+            }
+        });
+    });
+    document.querySelectorAll('.fade-in').forEach(el => {
+        el.style.opacity = '0';
+        observer.observe(el);
+    });
+
+    // Keyframes
+    const style = document.createElement('style');
+    style.textContent = `@keyframes fadeInUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }`;
+    document.head.appendChild(style);
+</script>
+
+</body>
+</html>

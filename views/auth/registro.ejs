@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Criar Conta - KuandaShop</title>
+  
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    /* =========================================
+       KUANDA REGISTER PREMIUM STYLES
+       ========================================= */
+    :root {
+      --k-red: #E31C25;
+      --k-black: #0F0F0F;
+      --glass-bg: rgba(255, 255, 255, 0.95);
+      --glass-border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      margin: 0; padding: 0; overflow-x: hidden; background-color: #FAFAFA;
+    }
+
+    /* Fundo Animado (Mesmo do Login) */
+    .auth-wrapper {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 40px 20px;
+      background: radial-gradient(circle at 10% 20%, rgba(227, 28, 37, 0.05) 0%, transparent 40%),
+                  radial-gradient(circle at 90% 80%, rgba(255, 193, 7, 0.1) 0%, transparent 40%);
+    }
+
+    /* Card Largo Glassmorphism */
+    .auth-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: var(--glass-border); border-radius: 32px;
+      box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.1);
+      width: 100%; max-width: 700px; /* Mais largo que o login */
+      overflow: hidden; position: relative;
+    }
+
+    /* Logo Animado */
+    .brand-logo-circle {
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, #E31C25, #B01018);
+      color: white; font-size: 1.8rem; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 20px; margin: 0 auto 20px;
+      box-shadow: 0 10px 20px rgba(227, 28, 37, 0.3);
+      animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+
+    /* Inputs Customizados */
+    .form-group { margin-bottom: 20px; }
+    .form-label-custom {
+      font-size: 0.8rem; font-weight: 700; color: #6B7280; margin-bottom: 6px; display: block; margin-left: 5px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .custom-input-group {
+      background: #F3F4F6; border-radius: 16px; border: 2px solid transparent;
+      padding: 5px; display: flex; align-items: center; transition: all 0.3s ease;
+    }
+    .custom-input-group:focus-within {
+      background: #FFFFFF; border-color: #E31C25; box-shadow: 0 0 0 4px rgba(227, 28, 37, 0.1);
+    }
+    
+    .input-icon { width: 45px; text-align: center; color: #9CA3AF; font-size: 1.1rem; }
+    .custom-input-group:focus-within .input-icon { color: #E31C25; }
+
+    .form-control-custom {
+      border: none; background: transparent; height: 45px; width: 100%;
+      color: #1F2937; font-weight: 500; outline: none; padding-right: 15px;
+    }
+    
+    /* Select Customizado */
+    .form-select-custom {
+      border: none; background: transparent; height: 45px; width: 100%;
+      color: #1F2937; font-weight: 500; outline: none; cursor: pointer;
+    }
+
+    /* Área de Upload Customizada (Dropzone Style) */
+    .upload-area {
+      border: 2px dashed #E5E7EB; border-radius: 16px; padding: 20px;
+      text-align: center; cursor: pointer; transition: all 0.3s;
+      background: #F9FAFB; position: relative; overflow: hidden;
+    }
+    .upload-area:hover { border-color: #E31C25; background: #FEF2F2; }
+    .upload-icon { font-size: 2rem; color: #9CA3AF; margin-bottom: 10px; }
+    .upload-text { font-size: 0.9rem; color: #6B7280; font-weight: 500; }
+    
+    /* Preview da Imagem */
+    .image-preview-wrapper {
+        display: none; justify-content: center; align-items: center; 
+        width: 100%; height: 100%; position: absolute; top: 0; left: 0; background: white;
+    }
+    .image-preview-wrapper img {
+        max-height: 100%; max-width: 100%; object-fit: cover;
+    }
+    .remove-image {
+        position: absolute; top: 10px; right: 10px; 
+        background: rgba(0,0,0,0.5); color: white; border: none; border-radius: 50%;
+        width: 30px; height: 30px; cursor: pointer; z-index: 10;
+    }
+
+    /* Botão Submit */
+    .btn-submit {
+      width: 100%; padding: 16px; border-radius: 16px;
+      background: #0F0F0F; color: white; font-weight: 700; font-size: 1rem;
+      border: none; transition: all 0.3s; margin-top: 10px;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+    }
+    .btn-submit:hover {
+      transform: translateY(-2px); box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2); background: #222;
+    }
+
+    /* Vendor Fields Animation */
+    #vendedorFields {
+        transition: all 0.4s ease-in-out;
+        opacity: 0; max-height: 0; overflow: hidden; transform: translateY(-10px);
+    }
+    #vendedorFields.visible {
+        opacity: 1; max-height: 500px; transform: translateY(0); padding-top: 10px;
+    }
+
+    /* Animação de Entrada */
+    .fade-in-up { animation: fadeInUp 0.8s cubic-bezier(0.2, 1, 0.3, 1) forwards; opacity: 0; transform: translateY(20px); }
+    @keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="card-body p-4 p-md-5">
+      
+      <!-- Cabeçalho -->
+      <div class="text-center mb-5 fade-in-up">
+        <div class="brand-logo-circle">K</div>
+        <h2 class="fw-bold text-dark mb-1">Criar Conta</h2>
+        <p class="text-muted small">Junte-se ao KuandaShop hoje mesmo</p>
+      </div>
+
+      <!-- FORMULÁRIO (Mesma ação e método) -->
+      <form action="/registro" method="POST" enctype="multipart/form-data" class="fade-in-up" style="animation-delay: 0.1s;">
+        
+        <!-- Grid: Nome e Email -->
+        <div class="row">
+          <div class="col-md-6 form-group">
+            <label for="nome" class="form-label-custom">Nome Completo</label>
+            <div class="custom-input-group">
+              <span class="input-icon"><i class="fas fa-user"></i></span>
+              <input type="text" class="form-control-custom" id="nome" name="nome" required placeholder="João Paulo">
+            </div>
+          </div>
+          <div class="col-md-6 form-group">
+            <label for="email" class="form-label-custom">Email</label>
+            <div class="custom-input-group">
+              <span class="input-icon"><i class="fas fa-envelope"></i></span>
+              <input type="email" class="form-control-custom" id="email" name="email" required placeholder="exemplo@email.com">
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid: Senha e Telefone -->
+        <div class="row">
+          <div class="col-md-6 form-group">
+            <label for="senha" class="form-label-custom">Senha</label>
+            <div class="custom-input-group">
+              <span class="input-icon"><i class="fas fa-lock"></i></span>
+              <input type="password" class="form-control-custom" id="senha" name="senha" required minlength="6" placeholder="••••••••">
+              <button type="button" class="btn border-0 text-muted" id="togglePassword"><i class="fas fa-eye"></i></button>
+            </div>
+          </div>
+          <div class="col-md-6 form-group">
+            <label for="telefone" class="form-label-custom">Telefone</label>
+            <div class="custom-input-group">
+              <span class="input-icon"><i class="fas fa-phone"></i></span>
+              <input type="tel" class="form-control-custom" id="telefone" name="telefone" placeholder="+244 900 000 000">
+            </div>
+          </div>
+        </div>
+
+        <!-- Tipo de Conta -->
+        <div class="form-group">
+          <label for="tipo" class="form-label-custom">Tipo de Conta</label>
+          <div class="custom-input-group">
+            <span class="input-icon"><i class="fas fa-users-cog"></i></span>
+            <select class="form-select-custom" id="tipo" name="tipo" required>
+                <option value="">Selecione o objetivo...</option>
+                <option value="cliente">Cliente - Quero Comprar</option>
+                <option value="vendedor">Vendedor - Quero Vender</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- CAMPOS DE VENDEDOR (Animação suave) -->
+        <div id="vendedorFields">
+          <div class="p-3 bg-light rounded-4 mb-3 border">
+              <h6 class="text-danger fw-bold mb-3"><i class="fas fa-store me-2"></i>Dados da Loja</h6>
+              <div class="form-group">
+                <label for="nome_loja" class="form-label-custom">Nome da Loja</label>
+                <div class="custom-input-group bg-white">
+                  <span class="input-icon"><i class="fas fa-tag"></i></span>
+                  <input type="text" class="form-control-custom" id="nome_loja" name="nome_loja" placeholder="Ex: TecnoAngola">
+                </div>
+              </div>
+              <div class="form-group mb-0">
+                <label for="descricao_loja" class="form-label-custom">Descrição</label>
+                <textarea class="form-control bg-white border-0 rounded-3 p-3" id="descricao_loja" name="descricao_loja" rows="3" placeholder="O que você vende?"></textarea>
+              </div>
+          </div>
+        </div>
+
+        <!-- UPLOAD FOTO (Dropzone Style) -->
+        <div class="form-group">
+            <label class="form-label-custom">FOTO DE PERFIL (OPCIONAL)</label>
+            <div class="upload-area position-relative" onclick="document.getElementById('foto_perfil').click()">
+                <div class="upload-content">
+                    <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                    <p class="upload-text mb-0">Toque para carregar foto</p>
+                    <small class="text-muted" style="font-size: 0.7rem;">JPG, PNG (Máx 5MB)</small>
+                </div>
+                <!-- Preview Image Overlay -->
+                <div id="previewContainer" class="image-preview-wrapper">
+                    <img id="imagePreview" src="#" alt="Preview">
+                    <button type="button" class="remove-image" id="removeImageBtn" title="Remover foto">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Input Real (Escondido mas funcional) -->
+            <input type="file" class="d-none" id="foto_perfil" name="foto_perfil" accept="image/*">
+        </div>
+
+        <!-- Termos -->
+        <div class="mb-4 mt-4">
+          <div class="form-check d-flex align-items-center">
+            <input class="form-check-input me-2" type="checkbox" id="termos" required style="width: 20px; height: 20px; cursor: pointer;">
+            <label class="form-check-label text-muted small lh-sm" for="termos" style="cursor: pointer;">
+              Li e concordo com os <a href="#" class="text-danger fw-bold text-decoration-none">Termos de Uso</a> e 
+              <a href="#" class="text-danger fw-bold text-decoration-none">Política de Privacidade</a>
+            </label>
+          </div>
+        </div>
+
+        <!-- Submit -->
+        <button type="submit" class="btn-submit mb-4">
+          <i class="fas fa-user-plus me-2"></i>Criar Conta
+        </button>
+
+        <!-- Link Login -->
+        <div class="text-center">
+          <p class="mb-0 text-muted small">
+            Já tem uma conta? 
+            <a href="/login" class="text-danger fw-bold text-decoration-none">Faça login aqui</a>
+          </p>
+        </div>
+
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 1. Toggle password visibility
+  document.getElementById('togglePassword').addEventListener('click', function() {
+    const passwordInput = document.getElementById('senha');
+    const icon = this.querySelector('i');
+    
+    if (passwordInput.type === 'password') {
+      passwordInput.type = 'text';
+      icon.classList.remove('fa-eye');
+      icon.classList.add('fa-eye-slash');
+      this.style.color = '#E31C25';
+    } else {
+      passwordInput.type = 'password';
+      icon.classList.remove('fa-eye-slash');
+      icon.classList.add('fa-eye');
+      this.style.color = '#9CA3AF';
+    }
+  });
+
+  // 2. Show/hide vendor fields (Com animação)
+  document.getElementById('tipo').addEventListener('change', function() {
+    const vendedorFields = document.getElementById('vendedorFields');
+    const nomeLoja = document.getElementById('nome_loja');
+    
+    if (this.value === 'vendedor') {
+      vendedorFields.classList.add('visible'); // Usa classe CSS para animar
+      nomeLoja.required = true;
+    } else {
+      vendedorFields.classList.remove('visible');
+      nomeLoja.required = false;
+    }
+  });
+
+  // 3. Image Preview Logic (Customizado para a Dropzone)
+  const fileInput = document.getElementById('foto_perfil');
+  const previewContainer = document.getElementById('previewContainer');
+  const imagePreview = document.getElementById('imagePreview');
+  const removeBtn = document.getElementById('removeImageBtn');
+
+  fileInput.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert('A imagem deve ter no máximo 5MB.');
+        this.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        imagePreview.src = e.target.result;
+        previewContainer.style.display = 'flex'; // Mostra o preview
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+
+  // Botão para remover a imagem selecionada
+  removeBtn.addEventListener('click', function(e) {
+    e.stopPropagation(); // Evita abrir o seletor de arquivos de novo
+    fileInput.value = '';
+    previewContainer.style.display = 'none';
+  });
+
+  // 4. Form validation
+  document.querySelector('form').addEventListener('submit', function(e) {
+    const senha = document.getElementById('senha').value;
+    const tipo = document.getElementById('tipo').value;
+    const nomeLoja = document.getElementById('nome_loja').value;
+
+    if (senha.length < 6) {
+      e.preventDefault();
+      alert('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (tipo === 'vendedor' && !nomeLoja.trim()) {
+      e.preventDefault();
+      alert('Nome da loja é obrigatório para vendedores.');
+      return;
+    }
+
+    // Feedback visual de carregamento
+    const btn = this.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Criando conta...';
+    btn.style.opacity = '0.8';
+    
+    // Se houver erro no backend, o form resubmete, então restauramos após 5s por segurança
+    setTimeout(() => {
+        btn.innerHTML = originalText;
+        btn.style.opacity = '1';
+    }, 5000);
+  });
+</script>
+
+</body>
+</html>

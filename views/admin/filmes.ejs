@@ -1,0 +1,215 @@
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+      <i class="fas fa-film me-2"></i>Gerenciar Filmes
+    </h2>
+    <div>
+      <a href="/admin/filmes/novo" class="btn btn-primary">
+        <i class="fas fa-plus me-2"></i>Novo Filme
+      </a>
+      <a href="/admin" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-2"></i>Voltar ao Dashboard
+      </a>
+    </div>
+  </div>
+
+  <!-- Films List -->
+  <% if (filmes.length === 0) { %>
+    <div class="text-center py-5">
+      <i class="fas fa-film fa-3x text-muted mb-3"></i>
+      <h4 class="text-muted">Nenhum filme cadastrado</h4>
+      <p class="text-muted">Adicione filmes para exibir na seção de cartazes da loja.</p>
+      <a href="/admin/filmes/novo" class="btn btn-primary">
+        <i class="fas fa-plus me-2"></i>Adicionar Primeiro Filme
+      </a>
+    </div>
+  <% } else { %>
+    <div class="row g-4">
+      <% filmes.forEach(filme => { %>
+        <div class="col-md-6 col-lg-4">
+          <div class="card border-0 shadow-sm h-100">
+            <!-- Film Poster -->
+            <div class="position-relative" style="height: 300px; overflow: hidden;">
+              <% if (filme.poster) { %>
+                <img src="/uploads/filmes/<%= filme.poster %>" 
+                     alt="<%= filme.titulo %>"
+                     class="card-img-top w-100 h-100" 
+                     style="object-fit: cover;">
+              <% } else { %>
+                <div class="bg-dark w-100 h-100 d-flex align-items-center justify-content-center">
+                  <i class="fas fa-film fa-4x text-light"></i>
+                </div>
+              <% } %>
+              
+              <!-- Status Badge -->
+              <div class="position-absolute top-0 end-0 m-2">
+                <span class="badge <%= filme.ativo ? 'bg-success' : 'bg-danger' %>">
+                  <%= filme.ativo ? 'Ativo' : 'Inativo' %>
+                </span>
+              </div>
+              
+              <!-- Classification Badge -->
+              <% if (filme.classificacao) { %>
+                <div class="position-absolute top-0 start-0 m-2">
+                  <span class="badge bg-warning text-dark">
+                    <i class="fas fa-certificate me-1"></i><%= filme.classificacao %>
+                  </span>
+                </div>
+              <% } %>
+              
+              <!-- Release Date -->
+              <% if (filme.data_lancamento) { %>
+                <div class="position-absolute bottom-0 start-0 m-2">
+                  <span class="badge bg-primary">
+                    <i class="fas fa-calendar me-1"></i>
+                    <%= new Date(filme.data_lancamento).getFullYear() %>
+                  </span>
+                </div>
+              <% } %>
+            </div>
+            
+            <!-- Film Details -->
+            <div class="card-body">
+              <h5 class="card-title mb-2">
+                <%= filme.titulo %>
+              </h5>
+              
+              <% if (filme.sinopse) { %>
+                <p class="card-text small text-muted mb-3">
+                  <%= filme.sinopse.length > 100 ? filme.sinopse.substring(0, 100) + '...' : filme.sinopse %>
+                </p>
+              <% } %>
+              
+              <% if (filme.trailer_url) { %>
+                <p class="card-text small text-muted mb-2">
+                  <i class="fab fa-youtube me-1 text-danger"></i>
+                  <a href="<%= filme.trailer_url %>" target="_blank" class="text-decoration-none">
+                    Ver trailer
+                  </a>
+                </p>
+              <% } %>
+              
+              <p class="card-text small text-muted mb-3">
+                <i class="fas fa-calendar me-1"></i>
+                Adicionado em: <%= new Date(filme.created_at).toLocaleDateString('pt-BR') %>
+              </p>
+              
+              <!-- Actions -->
+              <div class="d-flex gap-2">
+                <!-- Toggle Status -->
+                <form action="/admin/filmes/<%= filme.id %>/toggle-status" method="POST" class="flex-grow-1">
+                  <button type="submit" 
+                          class="btn w-100 <%= filme.ativo ? 'btn-outline-danger' : 'btn-outline-success' %>"
+                          onclick="return confirm('Tem certeza que deseja <%= filme.ativo ? 'desativar' : 'ativar' %> este filme?')">
+                    <i class="fas fa-<%= filme.ativo ? 'eye-slash' : 'eye' %> me-1"></i>
+                    <%= filme.ativo ? 'Desativar' : 'Ativar' %>
+                  </button>
+                </form>
+                
+                <!-- Edit -->
+                <a href="/admin/filmes/<%= filme.id %>/editar" class="btn btn-outline-primary">
+                  <i class="fas fa-edit"></i>
+                </a>
+                
+                <!-- Delete -->
+                <form action="/admin/filmes/<%= filme.id %>/excluir" method="POST" class="d-inline">
+                  <button type="submit" class="btn btn-outline-danger"
+                          onclick="return confirm('Tem certeza que deseja excluir este filme? Esta ação não pode ser desfeita.')">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
+</div>
+
+<script>
+  // Handle toggle status with AJAX
+  document.querySelectorAll('form[action*="toggle-status"]').forEach(form => {
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const button = this.querySelector('button');
+      const filmeId = this.action.split('/').filter(Boolean).pop();
+      const isCurrentlyActive = button.classList.contains('btn-outline-danger');
+      const newStatus = !isCurrentlyActive;
+      
+      try {
+        const response = await fetch(this.action, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ _method: 'POST' })
+        });
+        
+        if (response.ok) {
+          // Update button appearance
+          button.classList.remove(isCurrentlyActive ? 'btn-outline-danger' : 'btn-outline-success');
+          button.classList.add(newStatus ? 'btn-outline-danger' : 'btn-outline-success');
+          
+          button.innerHTML = `
+            <i class="fas fa-${newStatus ? 'eye-slash' : 'eye'} me-1"></i>
+            ${newStatus ? 'Desativar' : 'Ativar'}
+          `;
+          
+          // Update status badge
+          const badge = this.closest('.card').querySelector('.badge.bg-success, .badge.bg-danger');
+          if (badge) {
+            badge.classList.remove(isCurrentlyActive ? 'bg-success' : 'bg-danger');
+            badge.classList.add(newStatus ? 'bg-success' : 'bg-danger');
+            badge.textContent = newStatus ? 'Ativo' : 'Inativo';
+          }
+          
+          // Show success message
+          showToast(`Filme ${newStatus ? 'ativado' : 'desativado'} com sucesso!`, 'success');
+        } else {
+          throw new Error('Erro ao alterar status');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        showToast('Erro ao alterar status do filme', 'danger');
+      }
+    });
+  });
+
+  // Show toast notification
+  function showToast(message, type) {
+    const toastContainer = document.getElementById('toastContainer') || createToastContainer();
+    
+    const toastId = 'toast-' + Date.now();
+    const toastHtml = `
+      <div id="${toastId}" class="toast align-items-center text-white bg-${type} border-0" role="alert">
+        <div class="d-flex">
+          <div class="toast-body">
+            ${message}
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+      </div>
+    `;
+    
+    toastContainer.innerHTML += toastHtml;
+    const toastElement = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastElement);
+    toast.show();
+    
+    // Remove toast after hiding
+    toastElement.addEventListener('hidden.bs.toast', function () {
+      this.remove();
+    });
+  }
+
+  function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'position-fixed top-0 end-0 p-3';
+    container.style.zIndex = '9999';
+    document.body.appendChild(container);
+    return container;
+  }
+</script>

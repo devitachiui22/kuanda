@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title><%= title %> | KuandaStudio Admin</title>
+    
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <style>
+        :root {
+            --k-red: #E31C25;
+            --k-red-dark: #B01018;
+            --k-black: #0F0F0F;
+            --k-gray: #F3F4F6;
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --shadow-lux: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
+            --glass-bg: rgba(255, 255, 255, 0.9);
+            --glass-blur: blur(12px);
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #FAFAFA;
+            color: var(--k-black);
+            -webkit-font-smoothing: antialiased;
+            padding: 40px 0;
+        }
+
+        .master-card {
+            background: white;
+            border-radius: var(--radius-lg);
+            border: 1px solid rgba(0,0,0,0.03);
+            box-shadow: var(--shadow-lux);
+            overflow: hidden;
+        }
+
+        .header-lux {
+            background: var(--k-black);
+            padding: 30px;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-lux h3 { font-weight: 800; font-size: 1.4rem; letter-spacing: -0.5px; margin: 0; }
+
+        .form-section {
+            padding: 30px;
+            border-bottom: 1px solid #F1F5F9;
+        }
+
+        .section-title {
+            font-weight: 800;
+            font-size: 0.9rem;
+            color: var(--k-red);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .form-label {
+            font-weight: 700;
+            font-size: 0.8rem;
+            color: #64748B;
+            margin-bottom: 8px;
+        }
+
+        .form-control, .form-select {
+            border-radius: 12px;
+            padding: 12px 16px;
+            border: 1.5px solid #F1F5F9;
+            background: #F8FAFC;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: 0.2s;
+        }
+
+        .form-control:focus {
+            border-color: var(--k-red);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(227, 28, 37, 0.1);
+        }
+
+        /* Área de Links Estilizada */
+        .links-container-wrapper {
+            background: #F8FAFC;
+            border-radius: var(--radius-md);
+            padding: 20px;
+            border: 1.5px dashed #E2E8F0;
+        }
+
+        .link-row {
+            display: grid;
+            grid-template-columns: 1fr 2fr 50px;
+            gap: 12px;
+            margin-bottom: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        .btn-remove-link {
+            height: 48px;
+            width: 48px;
+            border-radius: 12px;
+            border: none;
+            background: #FEE2E2;
+            color: var(--k-red);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
+        .btn-remove-link:hover { background: var(--k-red); color: white; }
+
+        .btn-add-link {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            background: white;
+            border: 2px dashed #CBD5E1;
+            color: #64748B;
+            font-weight: 700;
+            font-size: 0.85rem;
+            transition: 0.2s;
+        }
+        .btn-add-link:hover { border-color: var(--k-red); color: var(--k-red); }
+
+        .btn-save-master {
+            background: var(--k-black);
+            color: white;
+            padding: 20px;
+            border: none;
+            border-radius: 50px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            width: 100%;
+            margin-top: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            transition: 0.3s;
+        }
+        .btn-save-master:hover { background: var(--k-red); transform: scale(1.02); }
+
+        .icon-3d { width: 24px; height: 24px; }
+
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        @media (max-width: 768px) {
+            .link-row { grid-template-columns: 1fr; gap: 8px; }
+            .btn-remove-link { width: 100%; height: 40px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="master-card border-0">
+        <div class="header-lux">
+            <h3><img src="https://img.icons8.com/3d-fluency/94/gamepad.png" class="icon-3d me-2"> <%= title %></h3>
+            <a href="/admin/jogos" class="btn btn-outline-light rounded-pill px-4 btn-sm fw-bold">Voltar</a>
+        </div>
+        
+        <div class="card-body p-0">
+            <form action="<%= action %>" method="POST" enctype="multipart/form-data">
+                
+                <!-- 1. INFO -->
+                <div class="form-section">
+                    <div class="section-title">
+                        <img src="https://img.icons8.com/3d-fluency/94/info.png" class="icon-3d"> Informações do Jogo
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label class="form-label">Título Oficial</label>
+                            <input type="text" name="titulo" class="form-control" value="<%= jogo ? jogo.titulo : '' %>" required placeholder="Ex: Grand Theft Auto VI">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Preço (Kz)</label>
+                            <input type="number" name="preco" class="form-control" value="<%= jogo ? jogo.preco : '' %>" placeholder="0 para grátis">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Plataforma</label>
+                            <select name="plataforma" class="form-select">
+                                <option value="PC" <%= jogo && jogo.plataforma == 'PC' ? 'selected' : '' %>>PC Master Race</option>
+                                <option value="PSN" <%= jogo && jogo.plataforma == 'PSN' ? 'selected' : '' %>>PlayStation</option>
+                                <option value="XBOX" <%= jogo && jogo.plataforma == 'XBOX' ? 'selected' : '' %>>Xbox Series</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Gênero</label>
+                            <select name="genero" class="form-select">
+                                <option value="Ação" <%= jogo && jogo.genero == 'Ação' ? 'selected' : '' %>>Ação</option>
+                                <option value="Aventura" <%= jogo && jogo.genero == 'Aventura' ? 'selected' : '' %>>Aventura</option>
+                                <option value="RPG" <%= jogo && jogo.genero == 'RPG' ? 'selected' : '' %>>RPG</option>
+                                <option value="Esporte" <%= jogo && jogo.genero == 'Esporte' ? 'selected' : '' %>>Esporte</option>
+                                <option value="Terror" <%= jogo && jogo.genero == 'Terror' ? 'selected' : '' %>>Terror</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Classificação</label>
+                            <select name="classificacao" class="form-select">
+                                <option value="L" <%= jogo && jogo.classificacao == 'L' ? 'selected' : '' %>>Livre</option>
+                                <option value="12" <%= jogo && jogo.classificacao == '12' ? 'selected' : '' %>>12+</option>
+                                <option value="16" <%= jogo && jogo.classificacao == '16' ? 'selected' : '' %>>16+</option>
+                                <option value="18" <%= jogo && jogo.classificacao == '18' ? 'selected' : '' %>>18+</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. DOWNLOADS -->
+                <div class="form-section">
+                    <div class="section-title">
+                        <img src="https://img.icons8.com/3d-fluency/94/download.png" class="icon-3d"> Servidores de Download
+                    </div>
+                    <div class="links-container-wrapper">
+                        <div id="linksContainer">
+                            <% if (typeof links !== 'undefined' && links.length > 0) { %>
+                                <% links.forEach((link, index) => { %>
+                                    <div class="link-row">
+                                        <input type="text" name="links_labels[]" class="form-control" placeholder="Servidor" value="<%= link.label %>" required>
+                                        <input type="url" name="links_urls[]" class="form-control" placeholder="URL do Arquivo" value="<%= link.url %>" required>
+                                        <button type="button" class="btn-remove-link" onclick="this.parentElement.remove()"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                <% }) %>
+                            <% } else { %>
+                                <!-- Inicia com um campo vazio para novos jogos -->
+                                <div class="link-row">
+                                    <input type="text" name="links_labels[]" class="form-control" placeholder="Ex: Mediafire" required>
+                                    <input type="url" name="links_urls[]" class="form-control" placeholder="https://..." required>
+                                    <button type="button" class="btn-remove-link" onclick="this.parentElement.remove()"><i class="fas fa-trash"></i></button>
+                                </div>
+                            <% } %>
+                        </div>
+                        <button type="button" class="btn-add-link" onclick="addLink()">
+                            <i class="fas fa-plus-circle me-1"></i> ADICIONAR OUTRO LINK
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. MÍDIA -->
+                <div class="form-section">
+                    <div class="section-title">
+                        <img src="https://img.icons8.com/3d-fluency/94/image.png" class="icon-3d"> Arquivos de Imagem
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Capa Vertical (Box Art)</label>
+                            <input type="file" name="capa" class="form-control" accept="image/*" <%= jogo ? '' : 'required' %>>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Banner Horizontal</label>
+                            <input type="file" name="banner" class="form-control" accept="image/*">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Screenshots (Múltiplas)</label>
+                            <input type="file" name="screenshots" class="form-control" accept="image/*" multiple>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. DESCRIÇÃO -->
+                <div class="form-section border-0">
+                    <div class="section-title">
+                        <img src="https://img.icons8.com/3d-fluency/94/align-left.png" class="icon-3d"> Detalhes Técnicos
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descrição do Jogo</label>
+                        <textarea name="descricao" class="form-control" rows="4" placeholder="Escreva sobre a história e gameplay..."><%= jogo ? jogo.descricao : '' %></textarea>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label">Requisitos do Sistema</label>
+                        <textarea name="requisitos" class="form-control" rows="3" placeholder="Processador, RAM, Placa de Vídeo..."><%= jogo ? jogo.requisitos : '' %></textarea>
+                    </div>
+
+                    <div class="form-check form-switch p-0 d-flex align-items-center gap-3">
+                        <label class="fw-bold m-0" for="ativo" style="cursor: pointer;">VISÍVEL NA LOJA</label>
+                        <input class="form-check-input ms-0" type="checkbox" name="ativo" id="ativo" style="width: 50px; height: 25px;" <%= (!jogo || jogo.ativo) ? 'checked' : '' %>>
+                    </div>
+
+                    <button type="submit" class="btn-save-master">
+                        <i class="fas fa-rocket me-2"></i> PUBLICAR JOGO NO SISTEMA
+                    </button>
+                </div>
+
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function addLink() {
+        const container = document.getElementById('linksContainer');
+        const div = document.createElement('div');
+        div.className = 'link-row';
+        div.innerHTML = `
+            <input type="text" name="links_labels[]" class="form-control" placeholder="Servidor" required>
+            <input type="url" name="links_urls[]" class="form-control" placeholder="https://..." required>
+            <button type="button" class="btn-remove-link" onclick="this.parentElement.remove()"><i class="fas fa-trash"></i></button>
+        `;
+        container.appendChild(div);
+    }
+</script>
+
+</body>
+</html>

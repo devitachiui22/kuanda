@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Gerenciar Pedido #<%= pedido.codigo %> | KuandaShop Seller</title>
+    
+    <!-- CSS & Fonts -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        /* =========================================
+           KUANDA GLOBAL DESIGN SYSTEM
+           ========================================= */
+        :root {
+            --k-red: #E31C25;
+            --k-red-dark: #B01018;
+            --k-black: #0F0F0F;
+            --k-gray: #F3F4F6;
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --shadow-lux: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-blur: blur(12px);
+            --kf-bg-dark: #09090b;
+            --kf-text: #e4e4e7;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #FAFAFA;
+            color: var(--k-black);
+            padding-top: 100px;
+            margin: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        a { text-decoration: none !important; color: inherit; transition: 0.2s; }
+
+        /* NAVBAR CAPSULE */
+        .nav-capsule {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            width: 90%; max-width: 1200px; background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 100px;
+            padding: 10px 25px; z-index: 1000; box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+
+        /* CARDS LUX */
+        .glass-panel {
+            background: white; border-radius: var(--radius-lg); padding: 30px;
+            border: 1px solid rgba(0,0,0,0.03); box-shadow: var(--shadow-lux); margin-bottom: 30px;
+        }
+        .panel-header-lux { 
+            display: flex; justify-content: space-between; align-items: center; 
+            margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #F1F5F9;
+        }
+        .panel-title { font-weight: 800; font-size: 1.15rem; letter-spacing: -0.5px; margin: 0; display: flex; align-items: center; gap: 10px; }
+
+        /* ITEM LIST */
+        .item-row { display: flex; align-items: center; gap: 15px; padding: 15px 0; border-bottom: 1px solid #F8FAFC; }
+        .item-row:last-child { border-bottom: none; }
+        .product-img-vendedor { width: 64px; height: 64px; object-fit: cover; border-radius: 14px; background: #F8FAFC; border: 1px solid #F1F5F9; }
+        .product-info h6 { font-weight: 800; font-size: 0.95rem; margin-bottom: 2px; }
+
+        /* STATUS CONTROLS - CUSTOM DROPDOWN */
+        .status-card { background: var(--k-black); color: white; border-radius: var(--radius-lg); padding: 30px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+        
+        .custom-dropdown-toggle {
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); 
+            color: white; border-radius: 14px; padding: 12px 15px; font-weight: 600; 
+            width: 100%; text-align: left; display: flex; align-items: center; justify-content: space-between;
+        }
+        .custom-dropdown-toggle:hover, .custom-dropdown-toggle:focus { background: rgba(255,255,255,0.12); color: white; }
+        .custom-dropdown-toggle::after { border-top: 0.4em solid white; }
+
+        .dropdown-menu-status {
+            background: #1A1A1A; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px; width: 100%; padding: 8px; margin-top: 10px !important;
+        }
+        .dropdown-item-status {
+            color: #ccc; border-radius: 10px; padding: 10px 15px;
+            display: flex; align-items: center; gap: 12px; font-weight: 600; transition: 0.2s;
+        }
+        .dropdown-item-status:hover { background: rgba(255,255,255,0.05); color: white; }
+        .dropdown-item-status.active { background: var(--k-red); color: white; }
+        
+        .status-icon-mini { width: 24px; height: 24px; object-fit: contain; }
+
+        .btn-update-status { 
+            background: var(--k-red); color: white; border: none; padding: 15px; 
+            border-radius: 14px; font-weight: 800; width: 100%; margin-top: 15px;
+            transition: 0.3s; box-shadow: 0 10px 20px rgba(227, 28, 37, 0.3);
+        }
+        .btn-update-status:hover { background: var(--k-red-dark); transform: translateY(-2px); }
+
+        /* CLIENT PANEL */
+        .btn-whatsapp-lux {
+            background: #25D366; color: white; border: none; width: 100%; padding: 14px;
+            border-radius: 16px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+            gap: 10px; transition: 0.3s; box-shadow: 0 10px 20px rgba(37, 211, 102, 0.2);
+        }
+
+        /* ICONS */
+        .icon-3d { width: 28px; height: 28px; }
+
+        /* RESPONSIVIDADE */
+        @media (max-width: 576px) {
+            .nav-capsule { padding: 8px 15px; width: 95%; }
+            .items-matrix-mobile {
+                display: grid !important; grid-template-columns: repeat(3, 1fr) !important;
+                gap: 10px; margin-top: 10px;
+            }
+            .item-tile-mini {
+                background: #F8FAFC; padding: 10px 5px; border-radius: 16px;
+                text-align: center; border: 1px solid #E2E8F0;
+            }
+            .tile-img { width: 100%; aspect-ratio: 1/1; border-radius: 10px; object-fit: cover; margin-bottom: 5px; }
+            .tile-name { font-size: 0.6rem; font-weight: 700; height: 28px; overflow: hidden; }
+            .desktop-items { display: none !important; }
+        }
+        @media (min-width: 577px) { .items-matrix-mobile { display: none !important; } }
+    </style>
+</head>
+<body>
+
+    <!-- NAVBAR CAPSULE -->
+    <nav class="nav-capsule">
+        <a href="/vendedor/vendas" class="d-flex align-items-center gap-2">
+            <img src="https://img.icons8.com/3d-fluency/94/left.png" width="24">
+            <span class="fw-bold d-none d-sm-inline">Voltar para Vendas</span>
+        </a>
+        <div class="d-flex gap-3 align-items-center">
+            <span class="fw-900 small text-danger d-none d-md-inline">GESTOR DE PEDIDOS</span>
+            <img src="https://img.icons8.com/3d-fluency/94/shop.png" width="32">
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        
+        <!-- FEEDBACK MESSAGES -->
+        <% if (messages.success) { %>
+            <div class="alert alert-success alert-kuanda alert-dismissible fade show">
+                <img src="https://img.icons8.com/3d-fluency/94/checked.png" width="30">
+                <div><%= messages.success %></div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <% } %>
+
+        <div class="d-flex justify-content-between align-items-end mb-5 flex-wrap gap-3">
+            <div>
+                <h1 class="order-title-main fw-900 fs-2 m-0" style="letter-spacing: -1.2px;">Pedido #<%= pedido.codigo || pedido.id %></h1>
+                <div class="badge bg-white text-muted border px-3 py-2 rounded-pill mt-2 fw-700 small">
+                    <i class="far fa-calendar-alt me-1"></i> <%= new Date(pedido.created_at).toLocaleString('pt-AO') %>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-8">
+                <!-- CARD DE ITENS -->
+                <div class="glass-panel">
+                    <div class="panel-header-lux">
+                        <div class="panel-title">
+                            <img src="https://img.icons8.com/3d-fluency/94/shopping-basket.png" class="icon-3d">
+                            Produtos Solicitados
+                        </div>
+                    </div>
+
+                    <div class="desktop-items">
+                        <% itens.forEach(item => { %>
+                            <div class="item-row">
+                                <img src="/uploads/produtos/<%= item.imagem1 %>" class="product-img-vendedor" onerror="this.src='https://via.placeholder.com/64'">
+                                <div class="product-info flex-grow-1">
+                                    <h6><%= item.produto_nome %></h6>
+                                    <small>Unidade: <%= parseFloat(item.preco_unitario).toLocaleString() %> Kz</small>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fw-800 fs-6">× <%= item.quantidade %></div>
+                                    <div class="fw-900 text-danger"><%= (item.preco_unitario * item.quantidade).toLocaleString() %> Kz</div>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+
+                    <div class="items-matrix-mobile">
+                        <% itens.forEach(item => { %>
+                            <div class="item-tile-mini">
+                                <img src="/uploads/produtos/<%= item.imagem1 %>" class="tile-img" onerror="this.src='https://via.placeholder.com/64'">
+                                <div class="tile-name"><%= item.produto_nome %></div>
+                            </div>
+                        <% }) %>
+                    </div>
+
+                    <div class="text-end mt-4 pt-3" style="border-top: 2px dashed #F1F5F9;">
+                        <span class="text-muted fw-700 me-2">FATURAMENTO TOTAL:</span>
+                        <div class="fw-900 fs-3 text-dark"><%= parseFloat(pedido.total).toLocaleString() %> Kz</div>
+                    </div>
+                </div>
+
+                <!-- CARD DE LOGÍSTICA -->
+                <div class="glass-panel">
+                    <div class="panel-header-lux">
+                        <div class="panel-title">
+                            <img src="https://img.icons8.com/3d-fluency/94/marker.png" class="icon-3d">
+                            Dados de Entrega
+                        </div>
+                    </div>
+                    <div class="row g-4">
+                        <div class="col-md-7">
+                            <span class="text-muted small fw-800 d-block mb-1">ENDEREÇO DE DESTINO</span>
+                            <p class="fw-700 m-0"><%= pedido.endereco_entrega %></p>
+                        </div>
+                        <div class="col-md-5">
+                            <span class="text-muted small fw-800 d-block mb-1">PAGAMENTO</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <img src="https://img.icons8.com/?size=100&id=AIPfWoh4WrhL&format=png&color=000000" width="24">
+                                <p class="fw-800 m-0"><%= pedido.metodo_pagamento %></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COLUNA DIREITA: AÇÕES -->
+            <div class="col-lg-4">
+                
+                <div class="status-card mb-4">
+                    <div class="d-flex align-items-center gap-3 mb-4">
+                        <img src="https://img.icons8.com/3d-fluency/94/synchronize.png" width="32">
+                        <h5 class="fw-800 m-0">Painel de Controle</h5>
+                    </div>
+                    
+                    <p class="small fw-700 opacity-50 mb-3">SITUAÇÃO DO PEDIDO</p>
+                    
+                    <form action="/vendedor/pedido/<%= pedido.id %>/status" method="POST" id="formStatus">
+                        <!-- VALOR QUE SERÁ ENVIADO AO SERVIDOR -->
+                        <input type="hidden" name="status" id="statusHidden" value="<%= pedido.status %>">
+                        
+                        <!-- DROPDOWN CUSTOMIZADO COM ICONES 3D -->
+                        <div class="dropdown">
+                            <button class="custom-dropdown-toggle dropdown-toggle" type="button" id="statusDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                <span id="selectedLabel">
+                                    <% if(pedido.status === 'pendente') { %>
+                                        <img src="https://img.icons8.com/3d-fluency/94/clock.png" class="status-icon-mini me-2"> Pendente
+                                    <% } else if(pedido.status === 'confirmado') { %>
+                                        <img src="https://img.icons8.com/3d-fluency/94/approval.png" class="status-icon-mini me-2"> Confirmado
+                                    <% } else if(pedido.status === 'enviado') { %>
+                                        <img src="https://img.icons8.com/3d-fluency/94/truck.png" class="status-icon-mini me-2"> Enviado
+                                    <% } else if(pedido.status === 'entregue') { %>
+                                        <img src="https://img.icons8.com/?size=100&id=AIPfWoh4WrhL&format=png&color=000000" class="status-icon-mini me-2"> Entregue
+                                    <% } else { %>
+                                        <img src="https://img.icons8.com/3d-fluency/94/cancel.png" class="status-icon-mini me-2"> Cancelado
+                                    <% } %>
+                                </span>
+                            </button>
+                            
+                            <ul class="dropdown-menu dropdown-menu-status" aria-labelledby="statusDropdown">
+                                <li>
+                                    <a class="dropdown-item dropdown-item-status" href="javascript:void(0)" onclick="setStatus('pendente', 'https://img.icons8.com/3d-fluency/94/clock.png', 'Pendente')">
+                                        <img src="https://img.icons8.com/3d-fluency/94/clock.png" class="status-icon-mini"> Pendente
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item dropdown-item-status" href="javascript:void(0)" onclick="setStatus('confirmado', 'https://img.icons8.com/3d-fluency/94/approval.png', 'Confirmado')">
+                                        <img src="https://img.icons8.com/3d-fluency/94/approval.png" class="status-icon-mini"> Confirmado
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item dropdown-item-status" href="javascript:void(0)" onclick="setStatus('enviado', 'https://img.icons8.com/3d-fluency/94/truck.png', 'Enviado')">
+                                        <img src="https://img.icons8.com/3d-fluency/94/truck.png" class="status-icon-mini"> Enviado
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item dropdown-item-status" href="javascript:void(0)" onclick="setStatus('entregue', 'https://img.icons8.com/?size=100&id=54Gny5Kpc44U&format=png&color=000000', 'Entregue')">
+                                        <img src="https://img.icons8.com/?size=100&id=54Gny5Kpc44U&format=png&color=000000" class="status-icon-mini"> Entregue
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider border-secondary opacity-25"></li>
+                                <li>
+                                    <a class="dropdown-item dropdown-item-status text-danger" href="javascript:void(0)" onclick="setStatus('cancelado', 'https://img.icons8.com/3d-fluency/94/cancel.png', 'Cancelar Pedido')">
+                                        <img src="https://img.icons8.com/3d-fluency/94/cancel.png" class="status-icon-mini"> Cancelar Pedido
+                                    </a>
+                                </li>
+                            </ul>
+                        </div>
+                        
+                        <button type="submit" class="btn-update-status" id="btnSalvar">
+                            ATUALIZAR STATUS
+                        </button>
+                    </form>
+                </div>
+
+                <!-- CONTATO DO CLIENTE -->
+                <div class="glass-panel">
+                    <div class="panel-header-lux">
+                        <div class="panel-title">Cliente</div>
+                    </div>
+                    <div class="d-flex align-items-center gap-3 mb-4">
+                        <div class="bg-light rounded-circle p-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                            <img src="https://img.icons8.com/3d-fluency/94/user-male-circle.png" width="30">
+                        </div>
+                        <div>
+                            <h6 class="mb-0 fw-800"><%= pedido.cliente_nome %></h6>
+                            <small class="text-muted fw-600"><%= pedido.cliente_email %></small>
+                        </div>
+                    </div>
+
+                    <% if (pedido.cliente_telefone) { %>
+                        <% const msg = `Olá ${pedido.cliente_nome}, sobre o pedido #${pedido.codigo}...`; %>
+                        <a href="https://wa.me/<%= pedido.cliente_telefone.replace(/\D/g, '') %>?text=<%= encodeURIComponent(msg) %>" target="_blank" class="btn-whatsapp-lux">
+                            <i class="fab fa-whatsapp fs-5"></i> Falar com Cliente
+                        </a>
+                    <% } %>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Função para atualizar visualmente o dropdown e o input hidden
+        function setStatus(valor, iconUrl, texto) {
+            document.getElementById('statusHidden').value = valor;
+            document.getElementById('selectedLabel').innerHTML = `
+                <img src="${iconUrl}" class="status-icon-mini me-2"> ${texto}
+            `;
+        }
+
+        // Feedback ao salvar
+        const formStatus = document.getElementById('formStatus');
+        const btnSalvar = document.getElementById('btnSalvar');
+
+        if(formStatus) {
+            formStatus.addEventListener('submit', function() {
+                btnSalvar.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> SINCRONIZANDO...';
+                btnSalvar.classList.add('disabled');
+            });
+        }
+    </script>
+</body>
+</html>

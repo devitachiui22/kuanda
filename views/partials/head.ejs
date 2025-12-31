@@ -1,0 +1,82 @@
+<!-- Meta Tags e CSS -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="KuandaShop - Seu marketplace favorito">
+
+<!-- Bootstrap 5 -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- SweetAlert2 -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<!-- jQuery (opcional, se necessário) -->
+<script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+
+<!-- Estilos Globais -->
+<style>
+    :root {
+        --primary-color: #E31C25;
+        --secondary-color: #6c757d;
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+        --light-color: #f8f9fa;
+        --dark-color: #343a40;
+    }
+    
+    body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f8f9fa;
+        color: #333;
+    }
+    
+    .text-primary { color: var(--primary-color) !important; }
+    .bg-primary { background-color: var(--primary-color) !important; }
+    .btn-primary { 
+        background-color: var(--primary-color) !important; 
+        border-color: var(--primary-color) !important;
+    }
+    
+    .btn-primary:hover {
+        background-color: #c82333 !important;
+        border-color: #bd2130 !important;
+    }
+    
+    /* Animações */
+    .fade-in {
+        animation: fadeIn 0.5s ease-in;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Scroll personalizado */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+</style>
