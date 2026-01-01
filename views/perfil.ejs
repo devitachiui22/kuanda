@@ -1,0 +1,537 @@
+  <style>
+    /* =========================================
+       KUANDA PROFILE SYSTEM (ULTIMATE EDITION)
+       ========================================= */
+    :root {
+      --primary: #0F0F0F;
+      --accent: #8B0000;
+      --surface: #FFFFFF;
+      --background: #F2F4F7;
+      --text-main: #1F2937;
+      --text-muted: #6B7280;
+      --border-light: #E5E7EB;
+      --radius-xl: 32px;
+      --radius-lg: 20px;
+      --shadow-soft: 0 20px 40px -10px rgba(0,0,0,0.08);
+      --shadow-hover: 0 25px 50px -12px rgba(139, 0, 0, 0.15);
+    }
+
+    body {
+      background-color: var(--background);
+      font-family: 'Inter', sans-serif;
+      color: var(--text-main);
+      /* CORREÇÃO CRÍTICA PARA NAVBAR FIXA */
+      padding-top: 140px; 
+      padding-bottom: 80px;
+    }
+
+    a { text-decoration: none !important; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+    /* MENSAGENS FLUTUANTES */
+    .alert-floating {
+        position: fixed; top: 100px; right: 20px; z-index: 9999;
+        border-radius: 12px; padding: 15px 25px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        animation: slideIn 0.5s ease;
+        display: flex; align-items: center; gap: 12px;
+        font-weight: 600;
+    }
+    .alert-error { background: #FEF2F2; color: #991B1B; border-left: 5px solid #991B1B; }
+    .alert-success { background: #F0FDF4; color: #166534; border-left: 5px solid #166534; }
+
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* =========================================
+       1. PROFILE HEADER CARD (HERO)
+       ========================================= */
+    .profile-hero {
+        background: var(--surface);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-soft);
+        overflow: hidden;
+        margin-bottom: 3rem; /* Espaço generoso */
+        position: relative;
+    }
+
+    .hero-cover {
+        height: 220px;
+        background: linear-gradient(135deg, #1a1a1a 0%, #3a0000 100%);
+        position: relative;
+    }
+    .hero-cover::after {
+        content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    }
+
+    .hero-content {
+        padding: 0 40px 40px 40px;
+        margin-top: -80px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+    }
+
+    .avatar-container {
+        position: relative;
+        margin-bottom: 20px;
+    }
+
+    .avatar-circle {
+        width: 160px; height: 160px;
+        border-radius: 50%;
+        border: 6px solid var(--surface);
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+
+    .btn-edit-photo {
+        position: absolute; bottom: 10px; right: 10px;
+        width: 42px; height: 42px;
+        background: var(--accent); color: white;
+        border-radius: 50%;
+        border: 3px solid var(--surface);
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; transition: 0.3s;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    .btn-edit-photo:hover { transform: scale(1.1); background: var(--primary); }
+
+    .user-info h2 { font-weight: 800; color: var(--primary); margin: 0; font-size: 1.8rem; }
+    .user-info p { color: var(--text-muted); font-weight: 500; margin-bottom: 15px; }
+    
+    .role-tag {
+        background: #F3F4F6; color: var(--primary);
+        padding: 6px 16px; border-radius: 50px;
+        font-size: 0.75rem; font-weight: 800;
+        text-transform: uppercase; letter-spacing: 1px;
+        display: inline-block;
+    }
+
+    .logout-corner {
+        position: absolute; top: 100px; right: 40px;
+    }
+    .btn-logout {
+        background: #FFF1F2; color: var(--accent);
+        border: none; padding: 10px 24px;
+        border-radius: 12px; font-weight: 700;
+        display: flex; align-items: center; gap: 8px;
+        transition: 0.3s; cursor: pointer;
+    }
+    .btn-logout:hover { background: var(--accent); color: white; transform: translateY(-2px); }
+
+    /* =========================================
+       2. ACTION HUB (GRID)
+       ========================================= */
+    .section-title {
+        font-size: 0.9rem; font-weight: 800; text-transform: uppercase;
+        color: var(--text-muted); letter-spacing: 1px; margin-bottom: 20px;
+        padding-left: 10px; border-left: 4px solid var(--accent);
+    }
+
+    .hub-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 24px;
+        margin-bottom: 4rem; /* Espaço entre seções */
+    }
+
+    .action-card {
+        background: var(--surface);
+        border-radius: var(--radius-lg);
+        padding: 25px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+        border: 1px solid transparent;
+        box-shadow: var(--shadow-soft);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .action-card::before {
+        content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
+        background: var(--border-light); transition: 0.3s;
+    }
+
+    .action-card:hover {
+        transform: translateY(-8px);
+        box-shadow: var(--shadow-hover);
+    }
+    .action-card:hover::before { background: var(--accent); }
+
+    .icon-box {
+        width: 50px; height: 50px;
+        border-radius: 14px;
+        background: #F8F9FA;
+        color: var(--primary);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; transition: 0.3s;
+    }
+
+    .action-card:hover .icon-box { background: var(--accent); color: white; }
+
+    .card-text h5 { font-weight: 700; font-size: 1.1rem; margin: 0 0 5px 0; color: var(--primary); }
+    .card-text p { font-size: 0.85rem; color: var(--text-muted); margin: 0; line-height: 1.4; }
+
+    /* Special Cards */
+    .card-highlight { background: #FFFBFB; border-color: rgba(139,0,0,0.1); }
+    .card-highlight .icon-box { background: #FFEBEB; color: var(--accent); }
+
+    /* =========================================
+       3. EDIT FORM SECTION
+       ========================================= */
+    .form-container {
+        background: var(--surface);
+        border-radius: var(--radius-xl);
+        padding: 40px;
+        box-shadow: var(--shadow-soft);
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+    }
+
+    .input-group-custom { margin-bottom: 25px; }
+    
+    .label-custom {
+        display: block; font-size: 0.75rem; font-weight: 800;
+        color: var(--text-muted); margin-bottom: 10px; text-transform: uppercase;
+    }
+
+    .input-custom {
+        width: 100%; padding: 16px 20px;
+        border-radius: 16px; border: 2px solid var(--border-light);
+        background: #F9FAFB; color: var(--primary);
+        font-weight: 600; font-size: 1rem;
+        transition: 0.3s;
+    }
+    .input-custom:focus {
+        background: white; border-color: var(--primary);
+        outline: none; box-shadow: 0 0 0 4px rgba(0,0,0,0.05);
+    }
+    .input-custom:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .vendor-box {
+        background: #FFF5F5; border: 1px dashed var(--accent);
+        border-radius: 20px; padding: 30px;
+    }
+
+    .btn-save {
+        width: 100%; padding: 18px;
+        background: var(--primary); color: white;
+        border: none; border-radius: 16px;
+        font-weight: 700; font-size: 1rem;
+        cursor: pointer; transition: 0.3s;
+        margin-top: 20px;
+    }
+    .btn-save:hover { background: #333; transform: translateY(-2px); }
+
+    @media (max-width: 768px) {
+        .form-grid { grid-template-columns: 1fr; gap: 20px; }
+        .logout-corner { position: static; margin-top: 20px; }
+        .hero-content { margin-top: -60px; }
+        .avatar-circle { width: 120px; height: 120px; }
+        body { padding-top: 100px; }
+    }
+
+    /* Adicione isso ao seu <style> no head */
+.btn-upload-banner {
+    position: absolute; 
+    top: 20px; 
+    right: 20px; 
+    z-index: 9999 !important; /* Força ficar na frente de tudo */
+    background: rgba(255, 255, 255, 0.9);
+    border: none;
+    padding: 8px 15px;
+    border-radius: 50px;
+    font-weight: bold;
+    font-size: 0.85rem;
+    color: #333;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-upload-banner:hover {
+    background: #fff;
+    transform: scale(1.05);
+    color: #d00;
+}
+
+/* Garante que o container pai permita posicionamento absoluto */
+.hero-cover {
+    position: relative !important;
+}
+  </style>
+
+
+<!-- MENSAGENS FLUTUANTES -->
+<% if (messages.error) { %>
+    <div class="alert-floating alert-error">
+        <i class="fas fa-exclamation-circle"></i> <span><%= messages.error %></span>
+    </div>
+<% } %>
+<% if (messages.success) { %>
+    <div class="alert-floating alert-success">
+        <i class="fas fa-check-circle"></i> <span><%= messages.success %></span>
+    </div>
+<% } %>
+
+<div class="container">
+
+    <!-- 1. CARTÃO DE PERFIL (HEADER INTEGRADO) -->
+    <div class="profile-hero">
+    
+    <!-- LÓGICA DO BANNER -->
+    <% 
+       let estiloBanner = '';
+       if (usuario.banner_loja) {
+           estiloBanner = `background-image: url('/uploads/banners/${usuario.banner_loja}'); background-size: cover; background-position: center;`;
+       } else {
+           estiloBanner = `background: linear-gradient(135deg, #1a1a1a 0%, #3a0000 100%);`; 
+       }
+    %>
+
+    <!-- 1. ÁREA DA CAPA (Onde ficam os tracinhos) -->
+    <div class="hero-cover" style="<%= estiloBanner %>">
+        
+        <!-- --- AQUI ESTÁ O BOTÃO DO BANNER --- -->
+        <!-- Nota: Removi o IF do vendedor para testar. O botão DEVE aparecer agora. -->
+        <form action="/perfil/atualizar" method="POST" enctype="multipart/form-data" id="formBanner">
+            
+            <input type="hidden" name="nome" value="<%= usuario.nome %>">
+            <input type="hidden" name="tipo_update" value="banner">
+
+            <label for="input_banner" class="btn-upload-banner">
+                <i class="fas fa-camera"></i> 
+                <span>Alterar Capa</span>
+            </label>
+            
+            <input type="file" name="banner_loja" id="input_banner" style="display: none;" accept="image/*" onchange="document.getElementById('formBanner').submit();">
+        </form>
+        <!-- ----------------------------------- -->
+
+    </div>
+
+    <div class="hero-content">
+        <!-- FOTO DE PERFIL -->
+        <form action="/perfil/atualizar" method="POST" enctype="multipart/form-data" id="avatarForm">
+            <input type="hidden" name="nome" value="<%= usuario.nome %>">
+            
+            <div class="avatar-container">
+                <div class="avatar-circle">
+                    <% 
+                        let foto = usuario.foto_perfil;
+                        let src = '/images/default-avatar.png';
+                        if (foto) src = `/uploads/perfil/${foto}`;
+                    %>
+                    <img src="<%= src %>" id="previewImg" onerror="this.src='https://ui-avatars.com/api/?name=<%= usuario.nome %>&background=0F0F0F&color=FFF'">
+                </div>
+                
+                <!-- Botão da Foto de Perfil (Circular pequeno embaixo) -->
+                <label for="foto_perfil" class="btn-edit-photo" title="Alterar Foto">
+                    <i class="fas fa-camera"></i>
+                    <input type="file" name="foto_perfil" id="foto_perfil" class="d-none" accept="image/*" onchange="document.getElementById('avatarForm').submit();">
+                </label>
+            </div>
+        </form>
+
+        <div class="user-info text-center">
+            <h2><%= usuario.nome %></h2>
+            <p><%= usuario.email %></p>
+            
+            <% if(usuario.tipo === 'vendedor') { %>
+                <span class="role-tag" style="background: #fee2e2; color: #991b1b;">Vendedor</span>
+            <% } else { %>
+                <span class="role-tag">Cliente</span>
+            <% } %>
+        </div>
+
+        <div class="logout-corner">
+            <form action="/logout" method="POST">
+                <button type="submit" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> Sair
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+    <!-- 2. HUB DE AÇÕES (Lógica Híbrida) -->
+    
+    <!-- SEÇÃO PESSOAL (PARA TODOS) -->
+    <h6 class="section-title">Minha Conta</h6>
+    <div class="hub-grid">
+        
+        <!-- MEUS PEDIDOS (LINK PARA A ROTA SOLICITADA) -->
+        <a href="/meus-pedidos" class="action-card card-highlight">
+            <div class="icon-box"><i class="fas fa-receipt"></i></div>
+            <div class="card-text">
+                <h5>Meus Pedidos</h5>
+                <p>Acompanhar compras e histórico</p>
+            </div>
+        </a>
+
+        <a href="/carrinho" class="action-card">
+            <div class="icon-box"><i class="fas fa-shopping-cart"></i></div>
+            <div class="card-text">
+                <h5>Carrinho</h5>
+                <p>Ver itens pendentes</p>
+            </div>
+        </a>
+
+        <a href="/" class="action-card">
+            <div class="icon-box"><i class="fas fa-search"></i></div>
+            <div class="card-text">
+                <h5>Explorar Loja</h5>
+                <p>Ver novidades</p>
+            </div>
+        </a>
+    </div>
+
+    <!-- SEÇÃO DE GESTÃO (CONDICIONAL) -->
+    <% if (usuario.tipo === 'vendedor' || usuario.tipo === 'admin') { %>
+        <h6 class="section-title">Painel de Gestão</h6>
+        <div class="hub-grid">
+            
+            <% if (usuario.tipo === 'vendedor') { %>
+                <a href="/vendedor" class="action-card">
+                    <div class="icon-box"><i class="fas fa-chart-pie"></i></div>
+                    <div class="card-text">
+                        <h5>Dashboard</h5>
+                        <p>Estatísticas da loja</p>
+                    </div>
+                </a>
+                <a href="/vendedor/vendas" class="action-card card-highlight">
+                    <div class="icon-box"><i class="fas fa-box-open"></i></div>
+                    <div class="card-text">
+                        <h5>Gerir Vendas</h5>
+                        <p>Pedidos recebidos de clientes</p>
+                    </div>
+                </a>
+                <a href="/vendedor/produtos" class="action-card">
+                    <div class="icon-box"><i class="fas fa-tags"></i></div>
+                    <div class="card-text">
+                        <h5>Meus Produtos</h5>
+                        <p>Adicionar ou editar itens</p>
+                    </div>
+                </a>
+            <% } %>
+
+            <% if (usuario.tipo === 'admin') { %>
+                <a href="/admin" class="action-card">
+                    <div class="icon-box"><i class="fas fa-user-shield"></i></div>
+                    <div class="card-text">
+                        <h5>Admin Geral</h5>
+                        <p>Controle total do sistema</p>
+                    </div>
+                </a>
+                <a href="/admin/vendedores" class="action-card">
+                    <div class="icon-box"><i class="fas fa-store"></i></div>
+                    <div class="card-text">
+                        <h5>Vendedores</h5>
+                        <p>Gerenciar lojas e planos</p>
+                    </div>
+                </a>
+                <a href="/admin/solicitacoes-vip" class="action-card">
+                    <div class="icon-box"><i class="fas fa-crown"></i></div>
+                    <div class="card-text">
+                        <h5>Solicitações VIP</h5>
+                        <p>Aprovar destaques</p>
+                    </div>
+                </a>
+            <% } %>
+
+        </div>
+    <% } %>
+
+    <!-- 3. FORMULÁRIO DE EDIÇÃO -->
+    <h6 class="section-title">Editar Informações</h6>
+    <div class="form-container">
+        <form action="/perfil/atualizar" method="POST" enctype="multipart/form-data">
+            <!-- Botão oculto para submit da foto via JS -->
+            <button type="submit" id="saveBtnTrigger" style="display:none;"></button>
+
+            <div class="form-grid">
+                <!-- Coluna Esquerda -->
+                <div class="left-col">
+                    <div class="input-group-custom">
+                        <label class="label-custom">Nome Completo</label>
+                        <input type="text" name="nome" class="input-custom" value="<%= usuario.nome %>" required>
+                    </div>
+                    <div class="input-group-custom">
+                        <label class="label-custom">Email (Não editável)</label>
+                        <input type="email" class="input-custom" value="<%= usuario.email %>" disabled>
+                    </div>
+                    <div class="input-group-custom">
+                        <label class="label-custom">Telefone</label>
+                        <input type="tel" name="telefone" class="input-custom" value="<%= usuario.telefone || '' %>" placeholder="+244 9XX XXX XXX">
+                    </div>
+                </div>
+
+                <!-- Coluna Direita (Vendedor ou Vazio) -->
+                <div class="right-col">
+                    <% if (usuario.tipo === 'vendedor') { %>
+                        <div class="vendor-box">
+                            <h5 class="fw-bold text-danger mb-4"><i class="fas fa-store me-2"></i>Dados da Loja</h5>
+                            
+                            <div class="input-group-custom">
+                                <label class="label-custom text-danger">Nome da Loja</label>
+                                <input type="text" name="nome_loja" class="input-custom" value="<%= usuario.nome_loja || '' %>" style="border-color: #FECACA;">
+                            </div>
+                            
+                            <div class="input-group-custom mb-0">
+                                <label class="label-custom text-danger">Descrição / Bio</label>
+                                <textarea name="descricao_loja" class="input-custom" rows="3" style="border-color: #FECACA; resize: none;"><%= usuario.descricao_loja || '' %></textarea>
+                            </div>
+                        </div>
+                    <% } else { %>
+                        <div class="h-100 d-flex flex-column justify-content-center align-items-center text-center p-4 border rounded-4" style="border-style: dashed !important; border-color: #E5E7EB !important;">
+                            <i class="fas fa-shield-alt fa-3x text-muted mb-3 opacity-25"></i>
+                            <p class="text-muted fw-bold mb-0">Sua conta está protegida.</p>
+                            <small class="text-muted">Último acesso: Hoje</small>
+                        </div>
+                    <% } %>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-save">
+                Salvar Alterações
+            </button>
+        </form>
+    </div>
+
+</div>
+
+<script>
+    // Preview da Imagem Instantâneo
+    document.getElementById('foto_perfil').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('previewImg').src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Auto-hide alert
+    setTimeout(() => {
+        const alerts = document.querySelectorAll('.alert-floating');
+        alerts.forEach(a => a.style.display = 'none');
+    }, 4000);
+</script>
+
+</body>
+</html>
