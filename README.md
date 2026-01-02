@@ -204,18 +204,16 @@ http://localhost:3000
 
 ## 📞 Contato e Suporte
 
-- **Email**: contato@kuandashop.ao
-- **WhatsApp**: +244 900 000 000
-- **Endereço**: Luanda, Angola
+- **Email**: kuandashopp@gmail.com
+- **WhatsApp**: +244 974 120 856
+- **Endereço**: Luanda Talatona, Angola
 
 ## 📄 Licença
 
-Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalhes.
+Este projeto está sob a licença de Augusto Neves - deny itachi
 
 ## 🤝 Contribuição
 
 Contribuições são bem-vindas! Por favor, leia as diretrizes de contribuição antes de submeter pull requests.
-
----
 
 **KuandaShop** - Conectando Angola através do comércio eletrônico 🇦🇴
