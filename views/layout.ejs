@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="pt-AO" itemscope itemtype="http://schema.org/WebSite">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#E31C25">
+  
+  <!-- ==================== SEO & METADATA AVANÇADO ==================== -->
+  <title><%= typeof title !== 'undefined' ? title : 'Kuanda | Compre e Venda Online em Angola' %></title>
+  
+  <!-- Canonical URL (Essencial para evitar conteúdo duplicado) -->
+  <link rel="canonical" href="https://kuanda.onrender.com<%= typeof currentUrl !== 'undefined' ? currentUrl : '' %>" />
+
+  <!-- Meta Tags Principais -->
+  <meta name="description" content="Marketplace líder em Angola. Compre e venda eletrônicos, moda, carros, imóveis e muito mais. Segurança, entrega rápida e os melhores preços de Luanda a todo o país.">
+  <meta name="keywords" content="kuanda, marketplace angola, compras online luanda, vendas online, kuandashop, shopping angola, eletrônicos angola, moda angola, carros usados angola, imóveis angola, iphone angola">
+  <meta name="author" content="Kuanda Angola">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+  <meta name="language" content="Portuguese">
+  <meta name="geo.region" content="AO">
+  <meta name="geo.placename" content="Luanda">
+  <meta name="geo.position" content="-8.839;13.289">
+  <meta name="ICBM" content="-8.839, 13.289">
+
+  <!-- Open Graph (Facebook/WhatsApp/LinkedIn) -->
+  <meta property="og:locale" content="pt_AO">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Kuanda">
+  <meta property="og:title" content="<%= typeof title !== 'undefined' ? title : 'Kuanda - Seu Marketplace em Angola' %>">
+  <meta property="og:description" content="Conectando compradores e vendedores em Angola. Milhares de produtos com os melhores preços. Eletrônicos, Moda, Casa, Carros e muito mais.">
+  <meta property="og:url" content="https://kuanda.onrender.com<%= typeof currentUrl !== 'undefined' ? currentUrl : '' %>">
+  <meta property="og:image" content="https://kuanda.onrender.com/images/og-share-image.png">
+  <meta property="og:image:alt" content="Kuanda Marketplace Angola">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/png">
+
+  <!-- Twitter Cards (X) -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@KuandaAO">
+  <meta name="twitter:creator" content="@KuandaAO">
+  <meta name="twitter:title" content="<%= typeof title !== 'undefined' ? title : 'Kuanda - Marketplace Angola' %>">
+  <meta name="twitter:description" content="Compre e venda online com segurança em Angola. O marketplace que conecta você aos melhores negócios.">
+  <meta name="twitter:image" content="https://kuanda.onrender.com/images/og-share-image.png">
+  <meta name="twitter:image:alt" content="Kuanda Marketplace Angola">
+
+  <!-- Apple Touch & Mobile -->
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/logo.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/logopng">
+  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+
+  <!-- ==================== PERFORMANCE & FONTES ==================== -->
+  
+  <!-- Preconexão para carregamento rápido -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+  
+  <!-- Fontes: Poppins (Texto) + Alternativa para Acherus Grotesque -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- CSS Frameworks -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- ==================== SCHEMA.ORG (JSON-LD) ==================== -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://kuanda.onrender.com/#website",
+        "name": "Kuanda",
+        "url": "https://kuanda.onrender.com/",
+        "description": "O maior marketplace de Angola para comprar e vender online com segurança e confiança.",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "https://kuanda.onrender.com/produtos?busca={search_term_string}",
+          "query-input": "required name=search_term_string"
+        },
+        "inLanguage": "pt-AO",
+        "keywords": "marketplace angola, compras online, vendas online, kuanda"
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://kuanda.onrender.com/#organization",
+        "name": "Kuanda",
+        "url": "https://kuanda.onrender.com/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://kuanda.onrender.com/images/logo.png",
+          "width": "300",
+          "height": "60"
+        },
+        "sameAs": [
+          "https://facebook.com/kuandaangola",
+          "https://instagram.com/kuandaangola",
+          "https://twitter.com/KuandaAO",
+          "https://linkedin.com/company/kuandaangola"
+        ],
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "telephone": "+244923456789",
+          "contactType": "customer service",
+          "availableLanguage": "Portuguese"
+        },
+        "address": {
+          "@type": "PostalAddress",
+          "addressCountry": "AO",
+          "addressRegion": "Luanda"
+        }
+      },
+      {
+        "@type": "LocalBusiness",
+        "name": "Kuanda Marketplace",
+        "image": "https://kuanda.onrender.com/images/og-share-image.png",
+        "telephone": "+244923456789",
+        "priceRange": "$$",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Luanda",
+          "addressLocality": "Luanda",
+          "addressRegion": "Luanda",
+          "postalCode": "0000",
+          "addressCountry": "AO"
+        },
+        "geo": {
+          "@type": "GeoCoordinates",
+          "latitude": "-8.839",
+          "longitude": "13.289"
+        },
+        "openingHoursSpecification": {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          "opens": "00:00",
+          "closes": "23:59"
+        }
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    /* Definição de fontes no corpo */
+    body {
+      font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    /* Títulos com fonte alternativa mais robusta */
+    h1, h2, h3, h4, h5, h6,
+    .navbar-brand,
+    .hero-title,
+    .section-title,
+    .product-title,
+    .card-title,
+    .btn,
+    .badge {
+      font-family: 'Inter', 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    
+    /* Logos e elementos de destaque */
+    .logo-text,
+    .brand-name,
+    .vip-badge,
+    .promo-tag {
+      font-family: 'Inter', 'Poppins', sans-serif;
+      font-weight: 900;
+    }
+
+    /* =========================================
+       KUANDA GLOBAL DESIGN SYSTEM
+       ========================================= */
+    :root {
+      /* Brand Colors */
+      --k-red: #E31C25;
+      --k-red-dark: #B01018;
+      --k-yellow: #FFC107;
+      --k-black: #0F0F0F;
+      --k-gray: #F3F4F6;
+      
+      /* Footer Colors */
+      --kf-bg-dark: #09090b;
+      --kf-card-bg: #18181b;
+      --kf-accent: #E31C25;
+      --kf-neon: #00f2ea;
+      --kf-text: #e4e4e7;
+      
+      /* Glass Effect */
+      --glass-bg: rgba(255, 255, 255, 0.9);
+      --glass-blur: blur(15px);
+    }
+
+    /* Reset & Base */
+    html, body { height: 100%; margin: 0; }
+    body {
+      background-color: #FAFAFA;
+      color: var(--k-black);
+      overflow-x: hidden;
+      display: flex; flex-direction: column;
+      padding-top: 100px; /* Espaço para navbar fixa */
+    }
+
+    main { flex: 1 0 auto; z-index: 1; position: relative; }
+
+    a { text-decoration: none; color: inherit; transition: all 0.2s ease; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    
+    /* Animation Utils */
+    .fade-up { animation: fadeUp 0.8s ease forwards; opacity: 0; transform: translateY(20px); }
+    @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
+    /* =========================================
+       NAVBAR DESKTOP (MODERN PILL STYLE - NO DROPDOWN)
+       ========================================= */
+    .nav-capsule {
+      position: fixed;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 95%; /* Mais largo para caber os botões inline */
+      max-width: 1300px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 100px;
+      padding: 10px 30px;
+      z-index: 1050; /* Garante que fique sobre tudo */
+      box-shadow: 0 10px 40px -10px rgba(0,0,0,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .nav-capsule.scrolled {
+      top: 10px;
+      width: 98%;
+      padding: 8px 24px;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: 0 20px 40px -10px rgba(0,0,0,0.1);
+    }
+
+    .nav-link-custom {
+        color: #52525b; font-weight: 600; font-size: 0.9rem; padding: 8px 12px; border-radius: 20px; transition: 0.2s;
+    }
+    .nav-link-custom:hover, .nav-link-custom.active {
+        color: var(--k-black); background: rgba(0,0,0,0.04);
+    }
+    .nav-link-highlight { color: var(--k-red) !important; font-weight: 700; }
+
+    /* Botões da Navbar (Sem Dropdown) */
+    .nav-btn-action {
+        display: flex; align-items: center; gap: 6px;
+        padding: 8px 16px; border-radius: 50px; font-weight: 700; font-size: 0.85rem;
+        transition: 0.2s; border: none; text-decoration: none; cursor: pointer;
+    }
+    .btn-nav-admin { background: #fee2e2; color: #b91c1c; }
+    .btn-nav-admin:hover { background: #fecaca; color: #991b1b; }
+    
+    .btn-nav-vendor { background: #eff6ff; color: #1d4ed8; }
+    .btn-nav-vendor:hover { background: #dbeafe; color: #1e40af; }
+    
+    .btn-nav-profile { background: #f4f4f5; color: #3f3f46; border: 1px solid #e4e4e7; }
+    .btn-nav-profile:hover { background: #e4e4e7; color: black; }
+
+    .btn-nav-logout { background: transparent; color: #71717a; border: 1px solid transparent; padding: 8px 12px; }
+    .btn-nav-logout:hover { color: var(--k-red); background: #fff1f2; }
+
+    /* =========================================
+       MOBILE HEADER (TOP)
+       ========================================= */
+    .mobile-header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 70px;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 1040;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+    }
+
+    /* =========================================
+       GAMER FOOTER
+       ========================================= */
+    .gamer-footer {
+        flex-shrink: 0;
+        background-color: var(--kf-bg-dark);
+        color: var(--kf-text);
+        padding: 60px 0 30px;
+        position: relative;
+        overflow: hidden;
+        border-top: 1px solid #27272a;
+        margin-top: auto;
+        padding-bottom: 110px; /* Espaço para o dock mobile */
+    }
+    @media(min-width: 992px) { .gamer-footer { padding-bottom: 40px; } }
+
+    .gf-header {
+        display: flex; justify-content: space-between; align-items: end;
+        margin-bottom: 30px; padding: 0 20px;
+    }
+    .gf-title {
+        font-weight: 800; font-size: 1.5rem; text-transform: uppercase;
+        background: linear-gradient(90deg, #fff, #666); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .gf-badge {
+        background: var(--kf-accent); color: white; padding: 5px 12px;
+        border-radius: 6px; font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    /* Scroll Horizontal Suave */
+    .gf-scroll-wrapper {
+        position: relative; width: 100%; overflow-x: auto;
+        padding-bottom: 30px; padding-left: 20px; padding-right: 20px;
+        display: flex; gap: 20px;
+        scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: smooth;
+        cursor: grab;
+    }
+    .gf-scroll-wrapper:active { cursor: grabbing; }
+    .gf-scroll-wrapper::-webkit-scrollbar { display: none; }
+
+    /* Cards do Footer */
+    .game-card {
+        min-width: 170px; height: 260px; border-radius: 16px; overflow: hidden;
+        position: relative; cursor: pointer; transition: all 0.3s ease;
+        border: 1px solid #27272a; background: #000; flex-shrink: 0;
+    }
+    .game-card:hover { transform: translateY(-8px) scale(1.02); border-color: var(--kf-neon); z-index: 2; box-shadow: 0 10px 30px rgba(0, 242, 234, 0.15); }
+    .game-img { width: 100%; height: 100%; object-fit: cover; opacity: 0.85; transition: 0.3s; }
+    .game-card:hover .game-img { opacity: 1; }
+    
+    .game-overlay {
+        position: absolute; bottom: 0; left: 0; right: 0;
+        background: linear-gradient(to top, black 30%, transparent);
+        padding: 20px 12px 12px; transform: translateY(100%); transition: 0.3s;
+    }
+    .game-card:hover .game-overlay { transform: translateY(0); }
+    .game-title { font-weight: 800; font-size: 0.95rem; color: white; text-shadow: 0 2px 4px black; margin-bottom: 2px; }
+    .game-price { color: var(--kf-neon); font-weight: 800; font-size: 0.9rem; }
+    .game-platform { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 6px; font-size: 0.65rem; color: white; backdrop-filter: blur(4px); font-weight: 700; text-transform: uppercase; }
+
+    .gf-bottom {
+        border-top: 1px solid #27272a; padding-top: 20px; margin-top: 40px;
+        text-align: center; font-size: 0.8rem; color: #52525b;
+    }
+
+    /* =========================================
+       MOBILE DOCK (BOTTOM NAV)
+       ========================================= */
+    .mobile-dock {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        width: 90%; max-width: 400px;
+        background: rgba(15, 15, 15, 0.95);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border-radius: 50px;
+        padding: 12px 30px;
+        display: flex; justify-content: space-between; align-items: center;
+        z-index: 1050; /* Acima de tudo */
+        box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    .dock-item { color: rgba(255,255,255,0.5); font-size: 1.3rem; position: relative; transition: 0.3s; }
+    .dock-item:hover, .dock-item.active { color: white; transform: translateY(-2px); }
+    .dock-item.active::after {
+        content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+        width: 4px; height: 4px; background: var(--k-yellow); border-radius: 50%;
+    }
+    .dock-fab {
+        background: var(--k-red); color: white;
+        width: 54px; height: 54px; border-radius: 20px;
+        display: flex; align-items: center; justify-content: center;
+        margin-top: -40px; box-shadow: 0 10px 20px rgba(227, 28, 37, 0.4);
+        border: 4px solid #FAFAFA; transition: 0.3s;
+    }
+    .dock-fab:active { transform: scale(0.95); }
+
+    @media (max-width: 768px) {
+        .game-card { min-width: 140px; height: 210px; }
+        body { padding-top: 80px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAVBAR DESKTOP (SEM DROPDOWN, BOTÕES DIRETOS) -->
+  <nav class="nav-capsule d-none d-lg-flex" id="desktopNav">
+    
+    <!-- LADO ESQUERDO: LOGO + LINKS -->
+    <div class="d-flex align-items-center gap-4">
+        <a href="/" class="d-flex align-items-center gap-2 text-dark text-decoration-none me-3">
+            <div class="rounded-circle bg-danger d-flex align-items-center justify-content-center text-white fw-bold shadow-sm" style="width: 32px; height: 32px; font-size: 0.9rem;">K</div>
+            <span class="fw-800" style="letter-spacing: -0.5px; font-size: 1.1rem;">KuandaShop</span>
+        </a>
+        
+        <div class="d-flex align-items-center gap-1">
+            <a href="/" class="nav-link-custom <%= (typeof path !== 'undefined' && path === '/') ? 'active' : '' %>">Início</a>
+            <a href="/produtos" class="nav-link-custom <%= (typeof path !== 'undefined' && path === '/produtos') ? 'active' : '' %>">Produtos</a>
+            <a href="/lojas" class="nav-link-custom <%= (typeof path !== 'undefined' && path === '/lojas') ? 'active' : '' %>">Lojas</a>
+            <a href="/categorias" class="nav-link-custom <%= (typeof path !== 'undefined' && path === '/categorias') ? 'active' : '' %>">Categorias</a>
+            <div class="vr mx-2 bg-secondary opacity-25"></div>
+            <a href="/ofertas" class="nav-link-custom nav-link-highlight">Ofertas</a>
+            <a href="/games" class="nav-link-custom nav-link-highlight">Games</a>
+        </div>
+    </div>
+
+    <!-- LADO DIREITO: CARRINHO + AÇÕES DE USUÁRIO -->
+    <div class="d-flex align-items-center gap-2">
+        <a href="/carrinho" class="position-relative text-dark btn-icon p-2 me-2">
+            <i class="fas fa-shopping-bag fs-5"></i>
+            <span id="deskCartCount" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger border border-light" style="font-size: 0.6rem; display: none;">0</span>
+        </a>
+        
+        <% if (typeof user !== 'undefined' && user) { %>
+            
+            <!-- LÓGICA DE BOTÕES POR TIPO DE USUÁRIO (SEM DROPDOWN) -->
+            
+            <!-- Botão Admin -->
+            <% if (user.tipo === 'admin') { %>
+                <a href="/admin" class="nav-btn-action btn-nav-admin shadow-sm">
+                    <i class="fas fa-shield-alt"></i> Painel Admin
+                </a>
+            <% } %>
+
+            <!-- Botão Vendedor -->
+            <% if (user.tipo === 'vendedor') { %>
+                <a href="/vendedor" class="nav-btn-action btn-nav-vendor shadow-sm">
+                    <i class="fas fa-store"></i> Painel Vendedor
+                </a>
+            <% } %>
+
+            <!-- Botão Perfil (Para todos) -->
+            <a href="/perfil" class="nav-btn-action btn-nav-profile shadow-sm">
+                <% if(user.foto_perfil) { %>
+                    <img src="/uploads/perfil/<%= user.foto_perfil %>" class="rounded-circle" width="20" height="20" style="object-fit: cover;">
+                <% } else { %>
+                    <i class="fas fa-user-circle"></i>
+                <% } %>
+                Perfil
+            </a>
+
+            <!-- Botão Sair -->
+            <form action="/logout" method="POST" class="m-0 d-flex">
+                <button type="submit" class="nav-btn-action btn-nav-logout" title="Sair">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+            </form>
+
+        <% } else { %>
+            <!-- USUÁRIO DESLOGADO -->
+            <a href="/login" class="btn btn-dark rounded-pill px-4 py-2 btn-sm shadow-sm fw-bold">Entrar</a>
+        <% } %>
+    </div>
+  </nav>
+
+  <!-- MOBILE HEADER -->
+  <header class="mobile-header d-lg-none">
+    <a href="/" class="fw-bold fs-4 text-dark text-decoration-none" style="letter-spacing: -1px;">
+        Kuanda<span class="text-danger">.</span>
+    </a>
+    <div class="d-flex align-items-center gap-3">
+        <a href="/produtos" class="text-dark p-2"><i class="fas fa-search fs-5"></i></a>
+        <% if (typeof user === 'undefined' || !user) { %>
+            <a href="/login" class="fw-bold text-dark small btn btn-light btn-sm rounded-pill border px-3">Entrar</a>
+        <% } %>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main>
+    <%- body %>
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="gamer-footer">
+    
+    <div class="container-fluid gf-header">
+        <div>
+            <div class="gf-title">Jogos Vips Solicite-já</div>
+            <span class="gf-badge">ligue para 974120856</span>
+        </div>
+        <span class="gf-badge bg-dark border border-secondary">Novidades</span>
+    </div>
+
+    <!-- CARROUSEL HORIZONTAL -->
+    <div class="gf-scroll-wrapper">
+
+        <!-- 1. GTA V (Clássico) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-windows"></i> PC</span>
+            <img src="https://upload.wikimedia.org/wikipedia/en/a/a5/Grand_Theft_Auto_V.png" class="game-img" alt="GTA V">
+            <div class="game-overlay">
+                <div class="game-title">Grand Theft Auto V</div>
+                <div class="game-price">30.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 2. FC 24 (Esportes) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-steam"></i> STEAM</span>
+            <img src="https://store-images.s-microsoft.com/image/apps.62211.14149336736014321.ba14b91a-e8c6-40d0-9285-ac512ca86a54.8021282f-2bc6-41f3-8412-fe458797ea2b?h=210" class="game-img" alt="FC 24">
+            <div class="game-overlay">
+                <div class="game-title">EA Sports FC 24</div>
+                <div class="game-price">80.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 3. COD MW3 (Ação) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-battle-net"></i> B.NET</span>
+            <img src="https://store-images.s-microsoft.com/image/apps.55183.13612848337674936.f9e71e15-6765-4282-8a3d-968dccfb729c.f59acc22-2c7b-41fb-96ca-d173dc290712" class="game-img" alt="COD MW3">
+            <div class="game-overlay">
+                <div class="game-title">Call of Duty: MW3</div>
+                <div class="game-price">70.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 4. Forza Horizon 5 (Corrida) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-xbox"></i> XBOX</span>
+            <img src="https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1551360/header.jpg?t=1746471508" class="game-img" alt="Forza 5">
+            <div class="game-overlay">
+                <div class="game-title">Forza Horizon 5</div>
+                <div class="game-price">90.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 5. God of War Ragnarok (Aventura) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-playstation"></i> PS5</span>
+            <img src="https://upload.wikimedia.org/wikipedia/pt/thumb/a/a5/God_of_War_Ragnar%C3%B6k_capa.jpg/330px-God_of_War_Ragnar%C3%B6k_capa.jpg" class="game-img" alt="GOW Ragnarok">
+            <div class="game-overlay">
+                <div class="game-title">God of War Ragnarok</div>
+                <div class="game-price">100.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 6. GTA VI (Pré-Venda / Hype) -->
+        <div class="game-card">
+            <span class="game-platform" style="background: #ff0055;"><i class="fas fa-clock"></i> PRÉ-VENDA</span>
+            <img src="https://www.rockstargames.com/VI/_next/image?url=%2FVI%2F_next%2Fstatic%2Fmedia%2FJason_and_Lucia_01_With_Logos_landscape.8596f77a.jpg&w=1920&q=75" class="game-img" alt="GTA VI">
+            <div class="game-overlay">
+                <div class="game-title">Grand Theft Auto VI</div>
+                <div class="game-price">180.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 7. Black Myth: Wukong (Moderno/Popular) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-steam"></i> STEAM</span>
+            <img src="https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2358720/header.jpg?t=1717865675" class="game-img" alt="Black Myth Wukong">
+            <div class="game-overlay">
+                <div class="game-title">Black Myth: Wukong</div>
+                <div class="game-price">75.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 8. Call of Duty: Black Ops 6 (Lançamento Recente) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-xbox"></i> XBOX</span>
+            <img src="https://www.callofduty.com/content/dam/atvi/callofduty/cod-touchui/store/games/bo6/Store_BO6PDP_Hero.webp" class="game-img" alt="COD Black Ops 6">
+            <div class="game-overlay">
+                <div class="game-title">COD: Black Ops 6</div>
+                <div class="game-price">120.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 9. Dragon Ball: Sparking! ZERO (Moderno) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-playstation"></i> PS5</span>
+            <img src="https://preview.redd.it/dragon-ball-sparking-zero-turns-a-year-old-today-v0-h0tlyhyvp7uf1.jpeg?auto=webp&s=727df8b439349f419a6605e05f16701f5fa1ce22" class="game-img" alt="Dragon Ball Sparking Zero">
+            <div class="game-overlay">
+                <div class="game-title">DB: Sparking! ZERO</div>
+                <div class="game-price">75.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 10. Assassin's Creed Shadows (Pré-Venda) -->
+        <div class="game-card">
+            <span class="game-platform" style="background: #ff0055;"><i class="fas fa-clock"></i> PRÉ-VENDA</span>
+            <img src="https://cdn1.epicgames.com/offer/14a28903e3d14bd5aa3e6dbf10868126/EN_EGST_StorePortrait_1200x1600_1200x1600-a010fb65414cbbc48e055d1f6eac41b8" class="game-img" alt="AC Shadows">
+            <div class="game-overlay">
+                <div class="game-title">AC: Shadows</div>
+                <div class="game-price">80.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 11. Silent Hill 2 Remake (Terror Moderno) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-steam"></i> STEAM</span>
+            <img src="https://upload.wikimedia.org/wikipedia/pt/1/18/Silent_Hill_2_2024_capa.png" class="game-img" alt="Silent Hill 2">
+            <div class="game-overlay">
+                <div class="game-title">Silent Hill 2 Remake</div>
+                <div class="game-price">60.000 Kz</div>
+            </div>
+        </div>
+
+        <!-- 12. Star Wars Outlaws (Aventura Moderna) -->
+        <div class="game-card">
+            <span class="game-platform"><i class="fab fa-windows"></i> PC</span>
+            <img src="https://image.api.playstation.com/vulcan/ap/rnd/202306/3020/5d272976398422e4228709c8ac02f56f816c687079af5222.jpg" class="game-img" alt="Star Wars Outlaws">
+            <div class="game-overlay">
+                <div class="game-title">Star Wars Outlaws</div>
+                <div class="game-price">80.000 Kz</div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="container gf-bottom">
+        <span>&copy; 2026 KuandaShop. Todos os direitos reservados.</span>
+    </div>
+
+  </footer>
+
+  <!-- NAVEGAÇÃO MOBILE INFERIOR (DOCK) -->
+  <nav class="mobile-dock d-lg-none">
+    <a href="/" class="dock-item <%= (typeof path !== 'undefined' && path === '/') ? 'active' : '' %>">
+        <i class="fas fa-home"></i>
+    </a>
+    <a href="/produtos" class="dock-item <%= (typeof path !== 'undefined' && path === '/produtos') ? 'active' : '' %>">
+        <i class="fas fa-search"></i>
+    </a>
+    
+    <!-- Botão Central Flutuante -->
+    <a href="/carrinho" class="dock-fab position-relative">
+        <i class="fas fa-shopping-basket"></i>
+        <span id="mobileCartCount" class="position-absolute top-0 end-0 translate-middle badge rounded-pill bg-warning text-dark border border-light" style="font-size: 0.6rem; display: none;">0</span>
+    </a>
+    
+    <a href="/lojas" class="dock-item">
+        <i class="fas fa-store"></i>
+    </a>
+    <a href="<%= (typeof user !== 'undefined' && user) ? '/perfil' : '/login' %>" class="dock-item">
+        <i class="fas fa-user"></i>
+    </a>
+  </nav>
+
+  <!-- SCRIPTS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  
+  <script>
+    // ========================
+    // GERENCIADOR DE CARRINHO
+    // ========================
+    const CartManager = {
+        updateCount() {
+            fetch('/carrinho/quantidade')
+                .then(r => r.json())
+                .then(d => {
+                    if(d.success) {
+                        ['deskCartCount', 'mobileCartCount'].forEach(id => {
+                            const el = document.getElementById(id);
+                            if(el) {
+                                el.textContent = d.quantidade;
+                                el.style.display = d.quantidade > 0 ? 'inline-block' : 'none';
+                            }
+                        });
+                    }
+                })
+                .catch(e => console.error(e));
+        },
+        async add(id, name) {
+            // Criação manual do toast para evitar dependência de modais/bibliotecas
+            const toast = document.createElement('div');
+            toast.className = 'toast show align-items-center text-white bg-success border-0 position-fixed top-0 end-0 m-3 shadow-lg';
+            toast.style.zIndex = '3000';
+            toast.style.pointerEvents = 'auto'; // Garante que o toast seja clicável/fechável
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body fw-bold">
+                        <i class="fas fa-check-circle me-2"></i> ${name} adicionado!
+                    </div>
+                </div>`;
+            document.body.appendChild(toast);
+            
+            // Remove após 2.5 segundos
+            setTimeout(() => {
+                toast.style.transition = "opacity 0.5s ease";
+                toast.style.opacity = "0";
+                setTimeout(() => toast.remove(), 500);
+            }, 2500);
+
+            try {
+                await fetch('/carrinho/adicionar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: `produto_id=${id}&quantidade=1`
+                });
+                this.updateCount();
+            } catch(e) { console.error(e); }
+        },
+        init() {
+            this.updateCount();
+            // Atualiza a cada 30 segundos para não sobrecarregar
+            setInterval(() => this.updateCount(), 30000);
+        }
+    };
+
+    // Torna global para uso nos botões de produto
+    window.addToCart = (id, name) => CartManager.add(id, name);
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        CartManager.init();
+        
+        // Efeito de Glass na Navbar ao rolar
+        window.addEventListener('scroll', () => {
+            const nav = document.getElementById('desktopNav');
+            if(nav) {
+                if (window.scrollY > 50) {
+                    nav.classList.add('scrolled');
+                } else {
+                    nav.classList.remove('scrolled');
+                }
+            }
+        });
+
+        // Limpeza automática de mensagens flash existentes
+        setTimeout(() => {
+            document.querySelectorAll('.toast').forEach(t => {
+                t.style.transition = "opacity 0.5s";
+                t.style.opacity = "0";
+                setTimeout(() => t.remove(), 500);
+            });
+        }, 4000);
+
+        // Lógica de "Drag to Scroll" para o Footer (Mouse)
+        const slider = document.querySelector('.gf-scroll-wrapper');
+        if(slider) {
+            let isDown = false;
+            let startX;
+            let scrollLeft;
+
+            slider.addEventListener('mousedown', (e) => {
+                isDown = true;
+                slider.style.cursor = 'grabbing';
+                startX = e.pageX - slider.offsetLeft;
+                scrollLeft = slider.scrollLeft;
+            });
+            slider.addEventListener('mouseleave', () => {
+                isDown = false;
+                slider.style.cursor = 'grab';
+            });
+            slider.addEventListener('mouseup', () => {
+                isDown = false;
+                slider.style.cursor = 'grab';
+            });
+            slider.addEventListener('mousemove', (e) => {
+                if (!isDown) return;
+                e.preventDefault();
+                const x = e.pageX - slider.offsetLeft;
+                const walk = (x - startX) * 2; // Velocidade do scroll
+                slider.scrollLeft = scrollLeft - walk;
+            });
+        }
+    });
+  </script>
+</body>
+</html>
