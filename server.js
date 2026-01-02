@@ -287,7 +287,839 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// ==================== ROTA MAGIC FALLBACK (DEVE VIR ANTES DO express.static) ====================
+// ==================== MIDDLEWARES DE AUTENTICAÇÃO ====================
+const requireAuth = (req, res, next) => {
+  if (!req.session.user) {
+    req.flash('error', 'Você precisa fazer login para acessar esta página');
+    return res.redirect('/login');
+  }
+  next();
+};
+
+const requireVendor = (req, res, next) => {
+  if (!req.session.user || req.session.user.tipo !== 'vendedor') {
+    req.flash('error', 'Acesso restrito a vendedores');
+    return res.redirect('/');
+  }
+  next();
+};
+
+const requireAdmin = (req, res, next) => {
+  if (!req.session.user || req.session.user.tipo !== 'admin') {
+    req.flash('error', 'Acesso restrito a administradores');
+    return res.redirect('/');
+  }
+  next();
+};
+
+
+// ==================== CONFIGURAÇÃO DE DIRETÓRIOS ====================
+const uploadDirs = [
+  'public/uploads',
+  'public/uploads/banners',
+  'public/uploads/filmes',
+  'public/uploads/produtos',
+  'public/uploads/perfil',
+  'public/uploads/games'
+];
+
+// Garante que todos os diretórios existam
+uploadDirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`✅ Criado diretório: ${dir}`);
+  } else {
+    console.log(`✅ Diretório já existe: ${dir}`);
+  }
+});
+
+// ==================== CONFIGURAÇÃO DO MULTER (SISTEMA VARCHAR - ARQUIVOS FÍSICOS) ====================
+
+// Storage para banners
+const bannerStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = 'public/uploads/banners/';
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const userId = req.session.user ? req.session.user.id : 'temp';
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    // Nome no formato: banner-{userId}-{timestamp}-{random}.ext
+    const filename = `banner-${userId}-${uniqueSuffix}${ext}`;
+    cb(null, filename);
+  }
+});
+
+// Storage para fotos de perfil
+const perfilStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    // Usa path.join(__dirname) para garantir que o caminho seja exato no Windows/Linux
+    const uploadDir = path.join(__dirname, 'public/uploads/perfil/');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const userId = req.session.user ? req.session.user.id : 'temp';
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const filename = `perfil-${userId}-${uniqueSuffix}${ext}`;
+    cb(null, filename);
+  }
+});
+
+// Storage geral para outros uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    let uploadPath = 'public/uploads/';
+    
+    // Determina a pasta baseada no campo ou URL
+    if (file.fieldname === 'banner_loja' || (file.fieldname === 'imagem' && req.originalUrl.includes('banners'))) {
+      uploadPath = 'public/uploads/banners/';
+    } else if (file.fieldname === 'poster' || req.originalUrl.includes('filmes')) {
+      uploadPath = 'public/uploads/filmes/';
+    } else if (file.fieldname === 'foto_perfil' || req.originalUrl.includes('perfil')) {
+      uploadPath = 'public/uploads/perfil/';
+    } else if (file.fieldname === 'capa' || req.originalUrl.includes('jogos')) {
+      uploadPath = 'public/uploads/games/';
+    } else if (file.fieldname.includes('imagem')) {
+      uploadPath = 'public/uploads/produtos/';
+    }
+    
+    // Garante que a pasta existe
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+      console.log(`📁 Criada pasta: ${uploadPath}`);
+    }
+    
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    const userId = req.session.user ? req.session.user.id : 'temp';
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    
+    // Prefixo baseado no tipo de arquivo
+    let prefix = 'imagem';
+    if (file.fieldname === 'foto_perfil') prefix = 'perfil';
+    if (file.fieldname === 'banner_loja') prefix = 'banner';
+    if (file.fieldname === 'poster') prefix = 'poster';
+    if (file.fieldname === 'capa') prefix = 'capa';
+    
+    // Nome no formato: {prefixo}-{userId}-{timestamp}-{random}.ext
+    const filename = `${prefix}-${userId}-${uniqueSuffix}${ext}`;
+    cb(null, filename);
+  }
+});
+
+// Filtro de arquivos comum
+const fileFilter = (req, file, cb) => {
+  const filetypes = /jpeg|jpg|png|gif|webp/;
+  const mimetype = filetypes.test(file.mimetype);
+  const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+  
+  if (mimetype && extname) {
+    return cb(null, true);
+  }
+  cb(new Error('Apenas imagens são permitidas (JPEG, JPG, PNG, GIF, WebP)!'));
+};
+
+// Configurações de upload específicas
+const upload = multer({ 
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+const uploadPerfil = multer({ 
+  storage: perfilStorage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+const uploadBanner = multer({ 
+  storage: bannerStorage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB para banners
+});
+
+// ==================== MIDDLEWARE DE UPLOAD ESPECÍFICO PARA PERFIL ====================
+const uploadPerfilMiddleware = upload.fields([
+  { name: 'foto_perfil', maxCount: 1 },
+  { name: 'banner_loja', maxCount: 1 }
+]);
+
+// ==================== FUNÇÕES AUXILIARES PARA GERENCIAMENTO DE ARQUIVOS ====================
+
+/**
+ * Remove arquivo de forma segura
+ * @param {string} filePath - Caminho completo do arquivo
+ * @param {string} tipo - Tipo de arquivo (banner, perfil, etc)
+ */
+const removerArquivoSeguro = (filePath, tipo = 'arquivo') => {
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`✅ ${tipo} removido: ${path.basename(filePath)}`);
+      return true;
+    } else {
+      console.log(`ℹ️  ${tipo} não encontrado para remover: ${filePath}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Erro ao remover ${tipo}:`, error.message);
+    return false;
+  }
+};
+
+/**
+ * Remove arquivo antigo quando há substituição
+ * @param {string} nomeArquivo - Nome do arquivo antigo
+ * @param {string} tipo - 'banner' ou 'perfil'
+ * @param {string} userId - ID do usuário (opcional)
+ */
+const removerArquivoAntigo = (nomeArquivo, tipo = 'arquivo', userId = null) => {
+  if (!nomeArquivo || typeof nomeArquivo !== 'string' || nomeArquivo.trim() === '') {
+    console.log(`ℹ️  Nenhum ${tipo} antigo para remover`);
+    return;
+  }
+  
+  // Para banners, verifica em ambas as pastas (banners e perfil)
+  const paths = [];
+  
+  if (tipo === 'banner') {
+    paths.push(path.join(__dirname, 'public/uploads/banners/', nomeArquivo));
+    paths.push(path.join(__dirname, 'public/uploads/perfil/', nomeArquivo)); // fallback
+  } else if (tipo === 'perfil') {
+    paths.push(path.join(__dirname, 'public/uploads/perfil/', nomeArquivo));
+  } else {
+    paths.push(path.join(__dirname, 'public/uploads/', tipo, '/', nomeArquivo));
+  }
+  
+  // Remove o arquivo em todos os caminhos possíveis
+  paths.forEach(p => removerArquivoSeguro(p, tipo));
+  
+  // Se tiver userId, remove arquivos antigos do mesmo usuário
+  if (userId && tipo === 'perfil') {
+    limparArquivosAntigosUsuario(userId, nomeArquivo, tipo);
+  }
+};
+
+/**
+ * Limpa arquivos antigos do usuário (mantém apenas o atual)
+ * @param {string} userId - ID do usuário
+ * @param {string} arquivoAtual - Nome do arquivo atual (não remover)
+ * @param {string} tipo - 'perfil' ou 'banner'
+ */
+const limparArquivosAntigosUsuario = (userId, arquivoAtual, tipo = 'perfil') => {
+  try {
+    const pasta = tipo === 'perfil' ? 'perfil' : 'banners';
+    const dirPath = path.join(__dirname, `public/uploads/${pasta}/`);
+    
+    if (!fs.existsSync(dirPath)) return;
+    
+    const files = fs.readdirSync(dirPath);
+    const prefix = tipo === 'perfil' ? 'perfil-' : 'banner-';
+    
+    files.forEach(file => {
+      // Verifica se o arquivo pertence ao usuário e não é o atual
+      if (file.startsWith(`${prefix}${userId}-`) && file !== arquivoAtual) {
+        const filePath = path.join(dirPath, file);
+        removerArquivoSeguro(filePath, `${tipo} antigo`);
+      }
+    });
+    
+  } catch (error) {
+    console.error(`❌ Erro ao limpar ${tipo}s antigos:`, error);
+  }
+};
+
+/**
+ * Verifica se um arquivo existe
+ * @param {string} nomeArquivo - Nome do arquivo
+ * @param {string} tipo - 'banner' ou 'perfil'
+ * @returns {boolean} - True se o arquivo existe
+ */
+const arquivoExiste = (nomeArquivo, tipo = 'perfil') => {
+  if (!nomeArquivo || typeof nomeArquivo !== 'string') return false;
+  
+  let caminhos = [];
+  
+  if (tipo === 'banner') {
+    caminhos = [
+      path.join(__dirname, 'public/uploads/banners/', nomeArquivo),
+      path.join(__dirname, 'public/uploads/perfil/', nomeArquivo) // fallback
+    ];
+  } else {
+    caminhos = [path.join(__dirname, 'public/uploads/perfil/', nomeArquivo)];
+  }
+  
+  return caminhos.some(caminho => fs.existsSync(caminho));
+};
+
+// ==================== SISTEMA HÍBRIDO DE UPLOAD (VARCHAR + BYTEA) ====================
+
+/**
+ * FUNÇÃO HÍBRIDA: Processa upload salvando em disco E fazendo backup BYTEA
+ * @param {Object} file - Objeto do arquivo do Multer
+ * @param {string} tabelaOrigem - 'usuarios', 'produtos', etc
+ * @param {number} registroId - ID do registro
+ * @param {string} campoDestino - Campo no banco (ex: 'foto_perfil', 'banner_loja')
+ * @returns {Promise<string>} - Nome do arquivo salvo
+ */
+const processarUploadHibrido = async (file, tabelaOrigem, registroId, campoDestino) => {
+  try {
+    console.log(`🔄 Processando upload híbrido para: ${file.filename}`);
+    
+    // 1. Verificar se arquivo foi salvo no disco (sistema VARCHAR atual)
+    if (!fs.existsSync(file.path)) {
+      throw new Error(`Arquivo não salvo no disco: ${file.path}`);
+    }
+    
+    console.log(`✅ Arquivo salvo no disco: ${file.path} (${fs.statSync(file.path).size} bytes)`);
+    
+    // 2. Salvar backup BYTEA em paralelo (NÃO bloqueia o fluxo principal)
+    salvarBackupImagemAsync(file.path, file.filename, tabelaOrigem, registroId);
+    
+    return file.filename;
+    
+  } catch (error) {
+    console.error(`❌ Erro no processamento híbrido:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Salva backup BYTEA de forma assíncrona (não bloqueante)
+ */
+const salvarBackupImagemAsync = async (filePath, fileName, tabelaOrigem, registroId) => {
+  try {
+    if (typeof salvarBackupImagem === 'function') {
+      // Faz o backup em segundo plano
+      setTimeout(async () => {
+        try {
+          console.log(`💾 Iniciando backup BYTEA para: ${fileName}`);
+          const sucesso = await salvarBackupImagem(filePath, fileName, tabelaOrigem, registroId);
+          if (sucesso) {
+            console.log(`✅ Backup BYTEA concluído: ${fileName}`);
+          }
+        } catch (backupError) {
+          console.error(`⚠️  Backup BYTEA falhou (não crítico):`, backupError.message);
+          // Não interrompe o fluxo principal se o backup falhar
+        }
+      }, 100); // Pequeno delay para não bloquear resposta
+    }
+  } catch (error) {
+    console.error(`⚠️  Erro ao agendar backup BYTEA:`, error.message);
+  }
+};
+
+// ==================== ROTA UNIFICADA HÍBRIDA PARA PERFIL ====================
+
+app.post('/perfil/upload-hibrido', requireAuth, uploadPerfilMiddleware, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    let { nome, telefone, remover_foto } = req.body;
+
+    console.log(`🔄 Upload híbrido iniciado para usuário: ${userId}`);
+    console.log('📁 Arquivos recebidos:', Object.keys(req.files || {}));
+
+    // 1. Buscar usuário atual
+    const usuarioResult = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
+    if (usuarioResult.rows.length === 0) {
+      req.flash('error', 'Usuário não encontrado.');
+      return res.redirect('/perfil');
+    }
+    
+    const usuario = usuarioResult.rows[0];
+    let fotoPerfil = usuario.foto_perfil;
+    let bannerLoja = usuario.banner_loja;
+
+    // 2. Processar remoção de foto
+    if (remover_foto === '1' || remover_foto === 'true') {
+      console.log('🗑️  Removendo foto de perfil...');
+      if (fotoPerfil) {
+        removerArquivoAntigo(fotoPerfil, 'perfil', userId);
+      }
+      fotoPerfil = null;
+    }
+
+    // 3. Processar NOVA FOTO DE PERFIL (com backup BYTEA)
+    if (req.files && req.files['foto_perfil'] && req.files['foto_perfil'][0]) {
+      const fotoFile = req.files['foto_perfil'][0];
+      
+      // Remover foto antiga se existir
+      if (fotoPerfil && fotoPerfil !== fotoFile.filename) {
+        removerArquivoAntigo(fotoPerfil, 'perfil', userId);
+      }
+      
+      // Processar com sistema híbrido
+      fotoPerfil = await processarUploadHibrido(fotoFile, 'usuarios', userId, 'foto_perfil');
+      
+      // Limpar arquivos antigos do usuário
+      limparArquivosAntigosUsuario(userId, fotoPerfil, 'perfil');
+    }
+
+    // 4. Processar NOVO BANNER (com backup BYTEA)
+    if (req.files && req.files['banner_loja'] && req.files['banner_loja'][0]) {
+      const bannerFile = req.files['banner_loja'][0];
+      
+      // Remover banner antigo se existir
+      if (bannerLoja && bannerLoja !== bannerFile.filename) {
+        removerArquivoAntigo(bannerLoja, 'banner');
+      }
+      
+      // Processar com sistema híbrido
+      bannerLoja = await processarUploadHibrido(bannerFile, 'usuarios', userId, 'banner_loja');
+      
+      // Limpar arquivos antigos se for banner do usuário
+      if (bannerFile.filename.startsWith(`banner-${userId}-`)) {
+        limparArquivosAntigosUsuario(userId, bannerLoja, 'banner');
+      }
+    }
+
+    // 5. Atualizar dados no banco (SISTEMA VARCHAR ATUAL - NÃO MUDAR)
+    let query = 'UPDATE usuarios SET nome = COALESCE($1, nome), telefone = $2';
+    const params = [nome || usuario.nome, telefone || usuario.telefone];
+    
+    // Adicionar foto se fornecida
+    if (fotoPerfil !== undefined) {
+      query += ', foto_perfil = $' + (params.length + 1);
+      params.push(fotoPerfil);
+    }
+    
+    // Adicionar banner se fornecido
+    if (bannerLoja !== undefined) {
+      query += ', banner_loja = $' + (params.length + 1);
+      params.push(bannerLoja);
+    }
+    
+    query += ', updated_at = CURRENT_TIMESTAMP WHERE id = $' + (params.length + 1);
+    params.push(userId);
+    
+    console.log(`💾 Atualizando banco VARCHAR...`);
+    await db.query(query, params);
+    console.log(`✅ Banco VARCHAR atualizado!`);
+
+    // 6. Atualizar sessão
+    if (fotoPerfil !== undefined) req.session.user.foto_perfil = fotoPerfil;
+    if (bannerLoja !== undefined) req.session.user.banner_loja = bannerLoja;
+    if (nome) req.session.user.nome = nome;
+    if (telefone !== undefined) req.session.user.telefone = telefone;
+
+    req.session.save((err) => {
+      if (err) {
+        console.error('❌ Erro ao salvar sessão:', err);
+        req.flash('error', 'Erro ao salvar sessão');
+        return res.redirect('/perfil');
+      }
+      
+      req.flash('success', 'Perfil atualizado com sucesso! (Sistema híbrido)');
+      res.redirect('/perfil');
+    });
+
+  } catch (error) {
+    console.error('❌ ERRO no upload híbrido:', error);
+    
+    // Limpeza de arquivos temporários em caso de erro
+    if (req.files) {
+      Object.values(req.files).forEach(fileArray => {
+        fileArray.forEach(file => {
+          if (file && file.path && fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+            console.log('🧹 Arquivo removido após erro:', file.path);
+          }
+        });
+      });
+    }
+    
+    req.flash('error', 'Erro ao atualizar perfil: ' + error.message);
+    res.redirect('/perfil');
+  }
+});
+
+// ==================== ROTA SIMPLES APENAS PARA FOTO ====================
+
+app.post('/perfil/foto-rapida', requireAuth, uploadPerfil.single('foto_perfil'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.json({ success: false, message: 'Nenhuma imagem selecionada' });
+    }
+
+    const userId = req.session.user.id;
+    console.log(`📸 Upload rápido para usuário ${userId}: ${req.file.filename}`);
+
+    // 1. Buscar foto atual
+    const usuario = await db.query('SELECT foto_perfil FROM usuarios WHERE id = $1', [userId]);
+    if (usuario.rows.length === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.json({ success: false, message: 'Usuário não encontrado' });
+    }
+
+    const fotoAtual = usuario.rows[0].foto_perfil;
+    
+    // 2. Remover foto antiga se existir
+    if (fotoAtual && fotoAtual !== req.file.filename) {
+      removerArquivoAntigo(fotoAtual, 'perfil', userId);
+    }
+
+    // 3. Processar com sistema híbrido
+    const novaFoto = await processarUploadHibrido(req.file, 'usuarios', userId, 'foto_perfil');
+    
+    // 4. Atualizar banco VARCHAR
+    await db.query(
+      'UPDATE usuarios SET foto_perfil = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novaFoto, userId]
+    );
+
+    // 5. Atualizar sessão
+    req.session.user.foto_perfil = novaFoto;
+    req.session.save();
+
+    // 6. Limpar arquivos antigos do mesmo usuário
+    limparArquivosAntigosUsuario(userId, novaFoto, 'perfil');
+
+    res.json({ 
+      success: true, 
+      message: 'Foto atualizada com sucesso!',
+      foto_perfil: novaFoto,
+      url: `/uploads/perfil/${novaFoto}`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro no upload rápido:', error);
+    
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.json({ 
+      success: false, 
+      message: 'Erro: ' + error.message 
+    });
+  }
+});
+
+// ==================== ROTA PARA VERIFICAR ESTADO HÍBRIDO ====================
+
+app.get('/status-hibrido', requireAuth, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    
+    // Buscar dados do usuário
+    const usuario = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
+    
+    // Verificar arquivos no disco
+    const arquivosDisco = {
+      perfil: [],
+      banners: []
+    };
+    
+    // Verificar pasta perfil
+    const perfilDir = 'public/uploads/perfil/';
+    if (fs.existsSync(perfilDir)) {
+      arquivosDisco.perfil = fs.readdirSync(perfilDir)
+        .filter(file => file.startsWith(`perfil-${userId}-`))
+        .map(file => ({
+          nome: file,
+          caminho: path.join(perfilDir, file),
+          existe: fs.existsSync(path.join(perfilDir, file)),
+          tamanho: fs.existsSync(path.join(perfilDir, file)) ? 
+            fs.statSync(path.join(perfilDir, file)).size : 0
+        }));
+    }
+    
+    // Verificar pasta banners
+    const bannersDir = 'public/uploads/banners/';
+    if (fs.existsSync(bannersDir)) {
+      arquivosDisco.banners = fs.readdirSync(bannersDir)
+        .filter(file => file.startsWith(`banner-${userId}-`))
+        .map(file => ({
+          nome: file,
+          caminho: path.join(bannersDir, file),
+          existe: fs.existsSync(path.join(bannersDir, file)),
+          tamanho: fs.existsSync(path.join(bannersDir, file)) ? 
+            fs.statSync(path.join(bannersDir, file)).size : 0
+        }));
+    }
+    
+    // Verificar backups BYTEA (se a tabela existir)
+    let backups = [];
+    try {
+      const backupsResult = await db.query(
+        'SELECT nome_arquivo, tabela_origem, created_at FROM imagens_backup WHERE tabela_origem = $1 AND registro_id = $2 ORDER BY created_at DESC',
+        ['usuarios', userId]
+      );
+      backups = backupsResult.rows;
+    } catch (e) {
+      console.log('ℹ️  Tabela de backups não disponível:', e.message);
+    }
+    
+    res.json({
+      success: true,
+      usuario: {
+        id: usuario.rows[0].id,
+        nome: usuario.rows[0].nome,
+        foto_perfil: usuario.rows[0].foto_perfil,
+        banner_loja: usuario.rows[0].banner_loja,
+        foto_existe_no_disco: arquivoExiste(usuario.rows[0].foto_perfil, 'perfil'),
+        banner_existe_no_disco: arquivoExiste(usuario.rows[0].banner_loja, 'banner')
+      },
+      arquivos_no_disco: arquivosDisco,
+      backups_bytea: backups,
+      sistema: 'híbrido (VARCHAR + BYTEA)'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro no status híbrido:', error);
+    res.json({ success: false, message: error.message });
+  }
+});
+
+// ==================== MIDDLEWARE DE FALLBACK MELHORADO ====================
+
+/**
+ * Middleware para servir imagens do disco OU do backup BYTEA
+ * (Colocar ANTES do express.static)
+ */
+app.use('/uploads/:pasta?/:arquivo?', async (req, res, next) => {
+  try {
+    const { pasta, arquivo } = req.params;
+    
+    if (!arquivo) {
+      return next(); // Passa para o próximo middleware
+    }
+    
+    // Determinar caminho do disco
+    let diskPath;
+    if (pasta === 'perfil' || arquivo.includes('perfil-')) {
+      diskPath = path.join('public/uploads/perfil/', arquivo);
+    } else if (pasta === 'banners' || arquivo.includes('banner-')) {
+      diskPath = path.join('public/uploads/banners/', arquivo);
+    } else if (pasta === 'produtos' || arquivo.includes('imagem-')) {
+      diskPath = path.join('public/uploads/produtos/', arquivo);
+    } else {
+      // Tenta servir do disco normalmente
+      return next();
+    }
+    
+    // 1. Tentar servir do disco primeiro (performance máxima)
+    if (fs.existsSync(diskPath)) {
+      console.log(`✅ Servindo do disco: ${arquivo}`);
+      return res.sendFile(path.resolve(diskPath), {
+        headers: {
+          'Content-Type': getMimeType(diskPath),
+          'Cache-Control': 'public, max-age=86400'
+        }
+      });
+    }
+    
+    // 2. Se não encontrar no disco, buscar no backup BYTEA
+    console.log(`🔄 Arquivo não encontrado no disco: ${arquivo}. Buscando backup BYTEA...`);
+    
+    const imagemData = await recuperarImagemBackup(arquivo);
+    if (imagemData) {
+      console.log(`✅ Servindo do backup BYTEA: ${arquivo}`);
+      
+      // Opcional: Recriar no disco para futuras requisições
+      setTimeout(async () => {
+        try {
+          await recriarArquivoDoBackup(arquivo, diskPath);
+        } catch (e) {
+          console.log(`⚠️  Não foi possível recriar arquivo: ${e.message}`);
+        }
+      }, 0);
+      
+      res.set({
+        'Content-Type': imagemData.mimeType,
+        'Content-Length': imagemData.buffer.length,
+        'Cache-Control': 'public, max-age=86400',
+        'X-Image-Source': 'database-backup'
+      });
+      
+      return res.send(imagemData.buffer);
+    }
+    
+    // 3. Se não encontrar em lugar nenhum, passar para o próximo middleware
+    console.log(`❌ Imagem não encontrada: ${arquivo}`);
+    next();
+    
+  } catch (error) {
+    console.error('❌ Erro no middleware de fallback:', error);
+    next(error);
+  }
+});
+
+// IMPORTANTE: express.static deve vir DEPOIS deste middleware
+app.use(express.static('public'));
+
+// ==================== FUNÇÃO AUXILIAR PARA SALVAR BACKUP (OPCIONAL) ====================
+
+/**
+ * Processa uploads salvando automaticamente no backup BYTEA (opcional)
+ * @param {Object} req - Request object
+ * @param {Object} res - Response object
+ * @param {string} tabelaOrigem - Tabela de origem
+ * @param {number} registroId - ID do registro
+ */
+const processarUploadComBackup = async (req, res, tabelaOrigem, registroId) => {
+    try {
+        // Processar arquivos enviados
+        const files = req.files || {};
+        
+        // Se for upload de arquivo único
+        if (req.file) {
+            const filePath = req.file.path;
+            const fileName = req.file.filename;
+            
+            console.log(`📁 Processando backup para: ${fileName}`);
+            
+            // Salvar no backup BYTEA (se a função existir)
+            if (typeof salvarBackupImagem === 'function') {
+              await salvarBackupImagem(filePath, fileName, tabelaOrigem, registroId);
+            }
+        }
+        
+        // Se for múltiplos arquivos
+        if (Object.keys(files).length > 0) {
+            for (const fieldname in files) {
+                const fileArray = files[fieldname];
+                if (fileArray && fileArray.length > 0) {
+                    for (const file of fileArray) {
+                        console.log(`📁 Processando backup para: ${file.filename}`);
+                        if (typeof salvarBackupImagem === 'function') {
+                          await salvarBackupImagem(file.path, file.filename, tabelaOrigem, registroId);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('❌ Erro no processamento de backup:', error);
+        // Não interrompe o fluxo principal se o backup falhar
+    }
+};
+
+// ==================== MIDDLEWARES ====================
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+// IMPORTANTE: express.static deve vir ANTES da nossa rota de fallback
+app.use(express.static('public'));
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(methodOverride('_method'));
+
+app.use(session({
+  store: new pgSession({
+    conString: process.env.DATABASE_URL,
+    tableName: 'user_sessions',
+    createTableIfMissing: true,
+    ttl: 24 * 60 * 60 // 24 horas
+  }),
+  secret: process.env.SESSION_SECRET || 'kuandashop-secret-key-2025',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    maxAge: 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: 'lax'
+  }
+}));
+
+app.use(flash());
+
+app.use(expressLayouts);
+app.set('layout', 'layout');
+app.use('/', vendasRoutes);
+
+app.use((req, res, next) => {
+  res.locals.user = req.session.user || null;
+  res.locals.messages = req.flash();
+  res.locals.currentUrl = req.originalUrl;
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!req.session.carrinho) {
+    req.session.carrinho = [];
+  }
+  res.locals.carrinho = req.session.carrinho || [];
+  next();
+});
+
+// ==================== FUNÇÕES AUXILIARES ====================
+const removeProfilePicture = (filename) => {
+  if (!filename) return;
+  try {
+    const filePath = path.join('public/uploads/perfil/', filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    console.error('Erro ao remover foto de perfil:', error);
+  }
+};
+
+const removeOldProfilePicture = async (userId, currentFilename) => {
+  try {
+    if (!currentFilename) return;
+    
+    const perfilDir = 'public/uploads/perfil/';
+    if (!fs.existsSync(perfilDir)) return;
+    
+    const files = fs.readdirSync(perfilDir);
+    const userFiles = files.filter(file => 
+      file.startsWith(`perfil-${userId}-`) && 
+      file !== currentFilename
+    );
+    
+    userFiles.forEach(file => {
+      const filePath = path.join(perfilDir, file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao remover fotos antigas:', error);
+  }
+};
+
+const validateProductData = (data) => {
+  const errors = [];
+  
+  if (!data.nome || data.nome.trim().length < 3) {
+    errors.push('Nome do produto deve ter pelo menos 3 caracteres');
+  }
+  
+  if (!data.descricao || data.descricao.trim().length < 10) {
+    errors.push('Descrição deve ter pelo menos 10 caracteres');
+  }
+  
+  if (!data.preco || isNaN(data.preco) || parseFloat(data.preco) <= 0) {
+    errors.push('Preço deve ser um número positivo');
+  }
+  
+  if (!data.categoria_id || isNaN(data.categoria_id)) {
+    errors.push('Categoria é obrigatória');
+  }
+  
+  if (!data.estoque || isNaN(data.estoque) || parseInt(data.estoque) < 0) {
+    errors.push('Estoque deve ser um número não negativo');
+  }
+  
+  return errors;
+};
+
+
+// ==================== ROTA MAGIC FALLBACK (DEVE VIR DEPOIS DO express.static) ====================
 
 /**
  * ROTA DE FALLBACK INTELIGENTE PARA UPLOADS
@@ -374,277 +1206,486 @@ app.get('/uploads/:pasta?/:arquivo?', async (req, res) => {
     }
 });
 
-// ==================== CONFIGURAÇÃO DE DIRETÓRIOS ====================
-const uploadDirs = [
-  'public/uploads',
-  'public/uploads/banners',
-  'public/uploads/filmes',
-  'public/uploads/produtos',
-  'public/uploads/perfil',
-  'public/uploads/games'
-];
+// ==================== ROTA UNIFICADA PARA UPLOAD DE PERFIL E BANNER (CORRIGIDA) ====================
 
-uploadDirs.forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log(`✅ Criado diretório: ${dir}`);
-  }
-});
+// ==================== CORREÇÃO 2: ROTA DE PERFIL BLINDADA ====================
 
-// ==================== CONFIGURAÇÃO DO MULTER (ARQUIVOS + BYTEA) ====================
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    let uploadPath = 'public/uploads/';
+app.post('/perfil/atualizar', requireAuth, uploadPerfilMiddleware, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    let { nome, telefone, nome_loja, descricao_loja, remover_foto } = req.body;
+
+    console.log('🔄 Processando atualização de perfil:', userId);
+
+    // 1. Buscar dados atuais do usuário
+    const usuarioResult = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
+    const usuario = usuarioResult.rows[0];
     
-    if (file.fieldname === 'imagem' && req.originalUrl.includes('banners')) {
-      uploadPath = 'public/uploads/banners/';
-    } else if (file.fieldname === 'poster' || req.originalUrl.includes('filmes')) {
-      uploadPath = 'public/uploads/filmes/';
-    } else if (file.fieldname === 'foto_perfil' || req.originalUrl.includes('perfil')) {
-      uploadPath = 'public/uploads/perfil/';
-    } else if (file.fieldname.includes('imagem')) {
-      uploadPath = 'public/uploads/produtos/';
-    }
-    if (file.fieldname === 'capa' || req.originalUrl.includes('jogos')) {
-      uploadPath = 'public/uploads/games/';
-    }
-    
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase();
-    const filename = 'imagem-' + uniqueSuffix + ext;
-    cb(null, filename);
-  }
-});
+    // Variáveis para atualização
+    let fotoPerfil = usuario.foto_perfil;
+    let bannerLoja = usuario.banner_loja;
 
-const perfilStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'public/uploads/perfil/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const userId = req.session.user ? req.session.user.id : 'temp';
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase();
-    const filename = `perfil-${userId}-${uniqueSuffix}${ext}`;
-    cb(null, filename);
-  }
-});
-
-const fileFilter = (req, file, cb) => {
-  const filetypes = /jpeg|jpg|png|gif|webp/;
-  const mimetype = filetypes.test(file.mimetype);
-  const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-  
-  if (mimetype && extname) {
-    return cb(null, true);
-  }
-  cb(new Error('Apenas imagens são permitidas (JPEG, JPG, PNG, GIF, WebP)!'));
-};
-
-const upload = multer({ 
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }
-});
-
-const uploadPerfil = multer({ 
-  storage: perfilStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: fileFilter
-});
-
-// ==================== FUNÇÃO AUXILIAR PARA SALVAR BACKUP APÓS UPLOAD ====================
-
-/**
- * Processa uploads salvando automaticamente no backup BYTEA
- * @param {Object} req - Request object
- * @param {Object} res - Response object
- * @param {string} tabelaOrigem - Tabela de origem
- * @param {number} registroId - ID do registro
- */
-const processarUploadComBackup = async (req, res, tabelaOrigem, registroId) => {
-    try {
-        // Processar arquivos enviados
-        const files = req.files || {};
-        
-        // Se for upload de arquivo único
-        if (req.file) {
-            const filePath = req.file.path;
-            const fileName = req.file.filename;
-            
-            console.log(`📁 Processando backup para: ${fileName}`);
-            
-            // Salvar no backup BYTEA
-            await salvarBackupImagem(filePath, fileName, tabelaOrigem, registroId);
-        }
-        
-        // Se for múltiplos arquivos
-        if (Object.keys(files).length > 0) {
-            for (const fieldname in files) {
-                const fileArray = files[fieldname];
-                if (fileArray && fileArray.length > 0) {
-                    for (const file of fileArray) {
-                        console.log(`📁 Processando backup para: ${file.filename}`);
-                        await salvarBackupImagem(file.path, file.filename, tabelaOrigem, registroId);
-                    }
-                }
+    // 2. Lógica de Remoção de Foto (Se o usuário clicou em remover)
+    if (remover_foto === 'true' || remover_foto === '1') {
+        // Tenta remover o arquivo antigo se existir
+        if (fotoPerfil) {
+            const pathAntigo = path.join(__dirname, 'public/uploads/perfil/', fotoPerfil);
+            if (fs.existsSync(pathAntigo)) {
+                try { fs.unlinkSync(pathAntigo); } catch(e) { console.error('Erro ao deletar foto antiga:', e.message); }
             }
         }
-    } catch (error) {
-        console.error('❌ Erro no processamento de backup:', error);
-        // Não interrompe o fluxo principal se o backup falhar
+        fotoPerfil = null; // Define como null para o banco
     }
-};
 
-// ==================== MIDDLEWARES ====================
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-
-// IMPORTANTE: express.static deve vir DEPOIS da nossa rota de fallback
-app.use(express.static('public'));
-
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(methodOverride('_method'));
-
-app.use(session({
-  store: new pgSession({
-    conString: process.env.DATABASE_URL,
-    tableName: 'user_sessions',
-    createTableIfMissing: true,
-    ttl: 24 * 60 * 60 // 24 horas
-  }),
-  secret: process.env.SESSION_SECRET || 'kuandashop-secret-key-2025',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    maxAge: 24 * 60 * 60 * 1000,
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    sameSite: 'lax'
-  }
-}));
-
-app.use(flash());
-
-app.use(expressLayouts);
-app.set('layout', 'layout');
-app.use('/', vendasRoutes);
-
-
-app.use((req, res, next) => {
-  res.locals.user = req.session.user || null;
-  res.locals.messages = req.flash();
-  res.locals.currentUrl = req.originalUrl;
-  next();
-});
-
-app.use((req, res, next) => {
-  if (!req.session.carrinho) {
-    req.session.carrinho = [];
-  }
-  res.locals.carrinho = req.session.carrinho || [];
-  next();
-});
-
-// ==================== FUNÇÕES AUXILIARES ====================
-const removeProfilePicture = (filename) => {
-  if (!filename) return;
-  try {
-    const filePath = path.join('public/uploads/perfil/', filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // 3. Processar Nova Foto (Se veio upload)
+    if (req.files && req.files['foto_perfil']) {
+        const file = req.files['foto_perfil'][0];
+        console.log('📸 Nova foto recebida:', file.filename);
+        
+        // Remove a antiga para não acumular lixo
+        if (usuario.foto_perfil && usuario.foto_perfil !== file.filename) {
+             const pathAntigo = path.join(__dirname, 'public/uploads/perfil/', usuario.foto_perfil);
+             if (fs.existsSync(pathAntigo)) {
+                 try { fs.unlinkSync(pathAntigo); } catch(e) {}
+             }
+        }
+        
+        fotoPerfil = file.filename;
+        
+        // Backup Híbrido (Se a função existir no seu código)
+        if (typeof salvarBackupImagem === 'function') {
+            await salvarBackupImagem(file.path, file.filename, 'usuarios', userId);
+        }
     }
+
+    // 4. Processar Novo Banner (Se veio upload)
+    if (req.files && req.files['banner_loja']) {
+        const file = req.files['banner_loja'][0];
+        console.log('🎨 Novo banner recebido:', file.filename);
+
+        if (usuario.banner_loja && usuario.banner_loja !== file.filename) {
+             const pathAntigo = path.join(__dirname, 'public/uploads/banners/', usuario.banner_loja);
+             if (fs.existsSync(pathAntigo)) {
+                 try { fs.unlinkSync(pathAntigo); } catch(e) {}
+             }
+        }
+
+        bannerLoja = file.filename;
+
+        // Backup Híbrido
+        if (typeof salvarBackupImagem === 'function') {
+            await salvarBackupImagem(file.path, file.filename, 'usuarios', userId);
+        }
+    }
+
+    // 5. Atualizar Banco de Dados
+    // Usamos COALESCE para manter o valor antigo se o campo vier vazio no form, 
+    // mas permitimos NULL explicitamente para as fotos se foi feita remoção.
+    let query = `
+        UPDATE usuarios 
+        SET nome = $1, 
+            telefone = $2, 
+            foto_perfil = $3, 
+            banner_loja = $4 
+    `;
+    
+    const params = [
+        nome || usuario.nome, 
+        telefone || usuario.telefone, 
+        fotoPerfil, 
+        bannerLoja
+    ];
+    
+    let paramIndex = 5;
+
+    // Campos extras para vendedor
+    if (usuario.tipo === 'vendedor') {
+        query += `, nome_loja = $${paramIndex++}, descricao_loja = $${paramIndex++}`;
+        params.push(nome_loja || usuario.nome_loja, descricao_loja || usuario.descricao_loja);
+    }
+
+    query += `, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramIndex}`;
+    params.push(userId);
+
+    await db.query(query, params);
+
+    // 6. Atualizar Sessão (Para refletir na hora sem relogar)
+    req.session.user.nome = nome || usuario.nome;
+    req.session.user.telefone = telefone || usuario.telefone;
+    req.session.user.foto_perfil = fotoPerfil;
+    req.session.user.banner_loja = bannerLoja;
+    
+    if (usuario.tipo === 'vendedor') {
+        req.session.user.nome_loja = nome_loja || usuario.nome_loja;
+        req.session.user.descricao_loja = descricao_loja || usuario.descricao_loja;
+    }
+
+    req.session.save((err) => {
+        if (err) console.error('Erro ao salvar sessão:', err);
+        req.flash('success', 'Perfil atualizado com sucesso!');
+        res.redirect('/perfil');
+    });
+
   } catch (error) {
-    console.error('Erro ao remover foto de perfil:', error);
+    console.error('❌ Erro crítico ao atualizar perfil:', error);
+    req.flash('error', 'Erro ao salvar alterações: ' + error.message);
+    res.redirect('/perfil');
   }
-};
+});
 
-const removeOldProfilePicture = async (userId, currentFilename) => {
+// ==================== ROTA DEBUG PARA VERIFICAR ESTADO DO PERFIL ====================
+
+app.get('/debug/perfil/:id?', requireAuth, async (req, res) => {
   try {
-    if (!currentFilename) return;
+    const userId = req.params.id || req.session.user.id;
     
-    const perfilDir = 'public/uploads/perfil/';
-    if (!fs.existsSync(perfilDir)) return;
+    // Buscar dados do usuário
+    const usuarioResult = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
     
-    const files = fs.readdirSync(perfilDir);
-    const userFiles = files.filter(file => 
-      file.startsWith(`perfil-${userId}-`) && 
-      file !== currentFilename
+    if (usuarioResult.rows.length === 0) {
+      return res.json({ error: 'Usuário não encontrado' });
+    }
+    
+    const usuario = usuarioResult.rows[0];
+    
+    // Verificar arquivos no disco
+    const diretorios = {
+      perfil: 'public/uploads/perfil/',
+      banners: 'public/uploads/banners/'
+    };
+    
+    const arquivos = {};
+    
+    for (const [tipo, caminho] of Object.entries(diretorios)) {
+      if (fs.existsSync(caminho)) {
+        arquivos[tipo] = fs.readdirSync(caminho)
+          .filter(file => file.includes(userId.toString()))
+          .map(file => {
+            const filePath = path.join(caminho, file);
+            return {
+              nome: file,
+              caminho: filePath,
+              existe: fs.existsSync(filePath),
+              tamanho: fs.existsSync(filePath) ? fs.statSync(filePath).size : 0,
+              criado: fs.existsSync(filePath) ? fs.statSync(filePath).ctime : null
+            };
+          });
+      } else {
+        arquivos[tipo] = [];
+      }
+    }
+    
+    // Verificar se os arquivos do banco existem no disco
+    const arquivosBanco = {
+      foto_perfil: usuario.foto_perfil,
+      banner_loja: usuario.banner_loja
+    };
+    
+    const arquivosExistem = {};
+    
+    for (const [campo, nomeArquivo] of Object.entries(arquivosBanco)) {
+      if (nomeArquivo) {
+        let caminho;
+        if (campo === 'foto_perfil') {
+          caminho = path.join('public/uploads/perfil/', nomeArquivo);
+        } else {
+          caminho = path.join('public/uploads/banners/', nomeArquivo);
+        }
+        arquivosExistem[campo] = {
+          nome: nomeArquivo,
+          caminho: caminho,
+          existe: fs.existsSync(caminho)
+        };
+      }
+    }
+    
+    res.json({
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        email: usuario.email,
+        foto_perfil: usuario.foto_perfil,
+        banner_loja: usuario.banner_loja,
+        updated_at: usuario.updated_at
+      },
+      sessao: req.session.user,
+      arquivos_no_disco: arquivos,
+      arquivos_do_banco: arquivosExistem,
+      status: 'OK'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro no debug:', error);
+    res.json({ error: error.message });
+  }
+});
+
+// ==================== ROTA PARA FORÇAR ATUALIZAÇÃO DA FOTO ====================
+
+app.post('/debug/forcar-foto', requireAuth, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    const { nome_arquivo } = req.body;
+    
+    if (!nome_arquivo) {
+      return res.json({ success: false, message: 'Nome do arquivo é obrigatório' });
+    }
+    
+    // Verificar se o arquivo existe no disco
+    const filePath = path.join('public/uploads/perfil/', nome_arquivo);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.json({ success: false, message: 'Arquivo não existe no disco' });
+    }
+    
+    // Atualizar banco de dados diretamente
+    await db.query(
+      'UPDATE usuarios SET foto_perfil = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [nome_arquivo, userId]
     );
     
-    userFiles.forEach(file => {
-      const filePath = path.join(perfilDir, file);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    // Atualizar sessão
+    req.session.user.foto_perfil = nome_arquivo;
+    
+    req.session.save((err) => {
+      if (err) {
+        console.error('Erro ao salvar sessão:', err);
+        return res.json({ success: false, message: 'Erro ao salvar sessão' });
       }
+      
+      res.json({ 
+        success: true, 
+        message: 'Foto forçada com sucesso!',
+        foto_perfil: nome_arquivo 
+      });
     });
+    
   } catch (error) {
-    console.error('Erro ao remover fotos antigas:', error);
+    console.error('❌ Erro ao forçar foto:', error);
+    res.json({ success: false, message: error.message });
   }
-};
+});
 
-const validateProductData = (data) => {
-  const errors = [];
-  
-  if (!data.nome || data.nome.trim().length < 3) {
-    errors.push('Nome do produto deve ter pelo menos 3 caracteres');
-  }
-  
-  if (!data.descricao || data.descricao.trim().length < 10) {
-    errors.push('Descrição deve ter pelo menos 10 caracteres');
-  }
-  
-  if (!data.preco || isNaN(data.preco) || parseFloat(data.preco) <= 0) {
-    errors.push('Preço deve ser um número positivo');
-  }
-  
-  if (!data.categoria_id || isNaN(data.categoria_id)) {
-    errors.push('Categoria é obrigatória');
-  }
-  
-  if (!data.estoque || isNaN(data.estoque) || parseInt(data.estoque) < 0) {
-    errors.push('Estoque deve ser um número não negativo');
-  }
-  
-  return errors;
-};
+// ==================== ROTA PARA VERIFICAR ARQUIVOS ====================
 
-// ==================== MIDDLEWARES DE AUTENTICAÇÃO ====================
-const requireAuth = (req, res, next) => {
-  if (!req.session.user) {
-    req.flash('error', 'Você precisa fazer login para acessar esta página');
-    return res.redirect('/login');
-  }
-  next();
-};
+app.get('/debug-arquivos', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  const resultados = {
+    usuario: req.session.user,
+    diretorios: {},
+    arquivosUsuario: {}
+  };
+  
+  // Listar arquivos nas pastas
+  ['perfil', 'banners'].forEach(pasta => {
+    const dirPath = path.join(__dirname, `public/uploads/${pasta}/`);
+    if (fs.existsSync(dirPath)) {
+      resultados.diretorios[pasta] = {
+        caminho: dirPath,
+        existe: true,
+        arquivos: fs.readdirSync(dirPath).slice(0, 20) // Primeiros 20
+      };
+      
+      // Filtrar arquivos do usuário atual
+      const prefix = pasta === 'perfil' ? 'perfil-' : 'banner-';
+      resultados.arquivosUsuario[pasta] = fs.readdirSync(dirPath)
+        .filter(file => file.startsWith(`${prefix}${userId}-`));
+    } else {
+      resultados.diretorios[pasta] = {
+        caminho: dirPath,
+        existe: false,
+        arquivos: []
+      };
+    }
+  });
+  
+  res.json(resultados);
+});
 
-const requireVendor = (req, res, next) => {
-  if (!req.session.user || req.session.user.tipo !== 'vendedor') {
-    req.flash('error', 'Acesso restrito a vendedores');
-    return res.redirect('/');
-  }
-  next();
-};
+// ==================== ROTA SEPARADA APENAS PARA UPLOAD DE FOTO ====================
 
-const requireAdmin = (req, res, next) => {
-  if (!req.session.user || req.session.user.tipo !== 'admin') {
-    req.flash('error', 'Acesso restrito a administradores');
-    return res.redirect('/');
-  }
-  next();
-};
+app.post('/perfil/upload-foto', requireAuth, uploadPerfil.single('foto_perfil'), async (req, res) => {
+  try {
+    if (!req.file) {
+      req.flash('error', 'Nenhuma imagem selecionada');
+      return res.redirect('/perfil');
+    }
 
+    const userId = req.session.user.id;
+    const usuario = await db.query('SELECT foto_perfil FROM usuarios WHERE id = $1', [userId]);
+    
+    if (usuario.rows.length === 0) {
+      if (req.file && req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      req.flash('error', 'Usuário não encontrado');
+      return res.redirect('/perfil');
+    }
+
+    // Remove foto antiga
+    const fotoAntiga = usuario.rows[0].foto_perfil;
+    if (fotoAntiga) {
+      removerArquivoAntigo(fotoAntiga, 'perfil', userId);
+    }
+
+    const novaFoto = req.file.filename;
+    
+    // Salvar backup BYTEA
+    await salvarBackupImagem(req.file.path, novaFoto, 'usuarios', userId);
+
+    // Atualizar banco
+    await db.query(
+      'UPDATE usuarios SET foto_perfil = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novaFoto, userId]
+    );
+
+    // Atualizar sessão
+    req.session.user.foto_perfil = novaFoto;
+    
+    req.flash('success', 'Foto de perfil atualizada com sucesso!');
+    res.redirect('/perfil');
+  } catch (error) {
+    console.error('❌ Erro ao atualizar foto:', error);
+    
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    req.flash('error', 'Erro ao atualizar foto de perfil');
+    res.redirect('/perfil');
+  }
+});
+
+// ==================== ROTA SEPARADA APENAS PARA UPLOAD DE BANNER ====================
+
+app.post('/perfil/upload-banner', requireAuth, uploadBanner.single('banner_loja'), async (req, res) => {
+  try {
+    if (!req.file) {
+      req.flash('error', 'Nenhuma imagem selecionada');
+      return res.redirect('/perfil');
+    }
+
+    const userId = req.session.user.id;
+    const usuario = await db.query('SELECT banner_loja FROM usuarios WHERE id = $1', [userId]);
+    
+    if (usuario.rows.length === 0) {
+      if (req.file && req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      req.flash('error', 'Usuário não encontrado');
+      return res.redirect('/perfil');
+    }
+
+    // Remove banner antigo
+    const bannerAntigo = usuario.rows[0].banner_loja;
+    if (bannerAntigo) {
+      removerArquivoAntigo(bannerAntigo, 'banner');
+    }
+
+    const novoBanner = req.file.filename;
+    
+    // Salvar backup BYTEA
+    await salvarBackupImagem(req.file.path, novoBanner, 'usuarios', userId);
+
+    // Atualizar banco
+    await db.query(
+      'UPDATE usuarios SET banner_loja = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [novoBanner, userId]
+    );
+
+    // Atualizar sessão
+    req.session.user.banner_loja = novoBanner;
+    
+    req.flash('success', 'Banner da loja atualizado com sucesso!');
+    res.redirect('/perfil');
+  } catch (error) {
+    console.error('❌ Erro ao atualizar banner:', error);
+    
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    req.flash('error', 'Erro ao atualizar banner da loja');
+    res.redirect('/perfil');
+  }
+});
+
+// ==================== ROTA PARA REMOVER FOTO DE PERFIL ====================
+
+app.post('/perfil/remover-foto', requireAuth, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    const usuario = await db.query('SELECT foto_perfil FROM usuarios WHERE id = $1', [userId]);
+    
+    if (usuario.rows.length === 0) {
+      req.flash('error', 'Usuário não encontrado');
+      return res.redirect('/perfil');
+    }
+
+    const fotoAtual = usuario.rows[0].foto_perfil;
+    
+    if (fotoAtual) {
+      // Remove arquivo físico
+      removerArquivoAntigo(fotoAtual, 'perfil', userId);
+      
+      // Remove do banco
+      await db.query(
+        'UPDATE usuarios SET foto_perfil = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [userId]
+      );
+      
+      // Remove da sessão
+      req.session.user.foto_perfil = null;
+    }
+    
+    req.flash('success', 'Foto de perfil removida com sucesso!');
+    res.redirect('/perfil');
+  } catch (error) {
+    console.error('❌ Erro ao remover foto:', error);
+    req.flash('error', 'Erro ao remover foto de perfil');
+    res.redirect('/perfil');
+  }
+});
+
+// ==================== ROTA PARA REMOVER BANNER ====================
+
+app.post('/perfil/remover-banner', requireAuth, async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    const usuario = await db.query('SELECT banner_loja FROM usuarios WHERE id = $1', [userId]);
+    
+    if (usuario.rows.length === 0) {
+      req.flash('error', 'Usuário não encontrado');
+      return res.redirect('/perfil');
+    }
+
+    const bannerAtual = usuario.rows[0].banner_loja;
+    
+    if (bannerAtual) {
+      // Remove arquivo físico
+      removerArquivoAntigo(bannerAtual, 'banner');
+      
+      // Remove do banco
+      await db.query(
+        'UPDATE usuarios SET banner_loja = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [userId]
+      );
+      
+      // Remove da sessão
+      req.session.user.banner_loja = null;
+    }
+    
+    req.flash('success', 'Banner da loja removido com sucesso!');
+    res.redirect('/perfil');
+  } catch (error) {
+    console.error('❌ Erro ao remover banner:', error);
+    req.flash('error', 'Erro ao remover banner da loja');
+    res.redirect('/perfil');
+  }
+});
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // ==================== ROTAS GOOGLE AUTH ====================
 
@@ -1624,9 +2665,6 @@ app.post('/resetar-senha/:token', async (req, res) => {
     }
 });
 
-app.use(passport.initialize());
-app.use(passport.session());
-
 // ==================== ROTAS DE PERFIL ====================
 app.get('/perfil', requireAuth, async (req, res) => {
   try {
@@ -1669,177 +2707,6 @@ app.get('/perfil', requireAuth, async (req, res) => {
       currentUser: req.session.user,
       title: 'Meu Perfil'
     });
-  }
-});
-
-
-
-// ======================================================================
-// ROTA 1: ATUALIZAR PERFIL (SISTEMA VARCHAR - ARQUIVOS FÍSICOS)
-// ======================================================================
-app.post('/perfil/atualizar', requireAuth, upload.fields([
-  { name: 'foto_perfil', maxCount: 1 },
-  { name: 'banner_loja', maxCount: 1 }
-]), async (req, res) => {
-  try {
-    const userId = req.session.user.id;
-    
-    // Captura os campos de texto
-    let { nome, telefone, nome_loja, descricao_loja, remover_foto } = req.body;
-
-    // 1. BUSCAR DADOS ATUAIS
-    const usuarioResult = await db.query('SELECT * FROM usuarios WHERE id = $1', [userId]);
-    
-    if (usuarioResult.rows.length === 0) {
-      req.flash('error', 'Usuário não encontrado.');
-      return res.redirect('/perfil');
-    }
-    
-    const usuario = usuarioResult.rows[0];
-
-    // 2. PREPARAR DADOS DE TEXTO
-    nome = nome ? nome.trim() : usuario.nome;
-    telefone = telefone ? telefone.trim() : usuario.telefone;
-    nome_loja = nome_loja ? nome_loja.trim() : usuario.nome_loja;
-    descricao_loja = descricao_loja ? descricao_loja.trim() : usuario.descricao_loja;
-
-    // 3. VARIÁVEIS PARA AS IMAGENS (VARCHAR - NOMES DE ARQUIVO)
-    let fotoPerfil = usuario.foto_perfil; // Nome do arquivo ou NULL
-    let bannerLoja = usuario.banner_loja; // Nome do arquivo ou NULL
-
-    // ----------------------------------------------------
-    // 3.1 TRATAMENTO DA FOTO DE PERFIL (VARCHAR)
-    // ----------------------------------------------------
-    
-    // Caso queira remover a foto
-    if (remover_foto === '1' || remover_foto === 'true') {
-      // Remove o arquivo físico se existir
-      if (fotoPerfil) {
-        const oldFotoPath = path.join('public/uploads/perfil/', fotoPerfil);
-        if (fs.existsSync(oldFotoPath)) {
-          try { 
-            fs.unlinkSync(oldFotoPath); 
-            console.log('Foto removida:', fotoPerfil);
-          } catch(e) { 
-            console.error('Erro ao deletar foto antiga:', e); 
-          }
-        }
-      }
-      fotoPerfil = null; // NULL no banco
-    }
-
-    // Se enviou nova foto
-    if (req.files && req.files['foto_perfil']) {
-      const fotoFile = req.files['foto_perfil'][0];
-
-      // Remove foto antiga se existir
-      if (fotoPerfil && fotoPerfil !== fotoFile.filename) {
-        const oldFotoPath = path.join('public/uploads/perfil/', fotoPerfil);
-        if (fs.existsSync(oldFotoPath)) {
-          try { 
-            fs.unlinkSync(oldFotoPath); 
-            console.log('Foto antiga removida:', fotoPerfil);
-          } catch(e) { 
-            console.error('Erro ao deletar foto antiga:', e); 
-          }
-        }
-      }
-
-      // Salva apenas o NOME do arquivo (VARCHAR)
-      fotoPerfil = fotoFile.filename;
-      console.log('Nova foto salva:', fotoPerfil);
-    }
-
-    // ----------------------------------------------------
-    // 3.2 TRATAMENTO DO BANNER DA LOJA (VARCHAR)
-    // ----------------------------------------------------
-    if (req.files && req.files['banner_loja']) {
-      const bannerFile = req.files['banner_loja'][0];
-
-      // Remove banner antigo se existir
-      if (bannerLoja && bannerLoja !== bannerFile.filename) {
-        const oldBannerPath = path.join('public/uploads/banners/', bannerLoja);
-        const oldBannerPathFallback = path.join('public/uploads/perfil/', bannerLoja);
-
-        if (fs.existsSync(oldBannerPath)) {
-          try { 
-            fs.unlinkSync(oldBannerPath); 
-            console.log('Banner antigo removido:', bannerLoja);
-          } catch(e) { 
-            console.error('Erro ao deletar banner antigo:', e); 
-          }
-        } else if (fs.existsSync(oldBannerPathFallback)) {
-          try { 
-            fs.unlinkSync(oldBannerPathFallback); 
-            console.log('Banner antigo (fallback) removido:', bannerLoja);
-          } catch(e) { 
-            console.error('Erro ao deletar banner antigo (fallback):', e); 
-          }
-        }
-      }
-
-      // Salva apenas o NOME do arquivo (VARCHAR)
-      bannerLoja = bannerFile.filename;
-      console.log('Novo banner salvo:', bannerLoja);
-    }
-
-    // 4. ATUALIZAR BANCO DE DADOS
-    let query = 'UPDATE usuarios SET nome = $1, telefone = $2, foto_perfil = $3, banner_loja = $4';
-    const updateData = [nome, telefone, fotoPerfil, bannerLoja];
-    let paramCount = 4;
-
-    if (usuario.tipo === 'vendedor') {
-      paramCount++;
-      query += `, nome_loja = $${paramCount}`;
-      updateData.push(nome_loja);
-
-      paramCount++;
-      query += `, descricao_loja = $${paramCount}`;
-      updateData.push(descricao_loja);
-    }
-
-    paramCount++;
-    query += `, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount}`;
-    updateData.push(userId);
-
-    await db.query(query, updateData);
-
-    // 5. ATUALIZAR SESSÃO
-    req.session.user.nome = nome;
-    req.session.user.telefone = telefone || null;
-    req.session.user.foto_perfil = fotoPerfil; // Nome do arquivo ou null
-    req.session.user.banner_loja = bannerLoja; // Nome do arquivo ou null
-
-    if (usuario.tipo === 'vendedor') {
-      req.session.user.nome_loja = nome_loja || '';
-      req.session.user.descricao_loja = descricao_loja || '';
-    }
-
-    // Salvar sessão
-    req.session.save((err) => {
-      if (err) console.error("Erro ao salvar sessão:", err);
-      req.flash('success', 'Perfil atualizado com sucesso!');
-      res.redirect('/perfil');
-    });
-
-  } catch (error) {
-    console.error('Erro CRÍTICO ao atualizar perfil:', error);
-    console.error('Stack trace:', error.stack);
-
-    // Limpeza em caso de erro
-    if (req.files) {
-      if (req.files['foto_perfil']) {
-        const p = req.files['foto_perfil'][0].path;
-        if (fs.existsSync(p)) try { fs.unlinkSync(p); } catch(e) {}
-      }
-      if (req.files['banner_loja']) {
-        const p = req.files['banner_loja'][0].path;
-        if (fs.existsSync(p)) try { fs.unlinkSync(p); } catch(e) {}
-      }
-    }
-
-    req.flash('error', 'Erro ao atualizar perfil. Tente novamente.');
-    res.redirect('/perfil');
   }
 });
 
@@ -4514,6 +5381,85 @@ app.get('/admin/migrar-planos', requireAdmin, async (req, res) => {
   }
 });
 
+// =============================================================
+//  ROTAS DE GERENCIAMENTO DE LOJA (COLE ISTO NO SERVER.JS)
+// =============================================================
+
+// ROTA 1: Tela de Gerenciamento (GET)
+app.get('/admin/vendedor/:id/gerenciar', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Buscar Vendedor
+    const vendedorResult = await db.query(
+      'SELECT * FROM usuarios WHERE id = $1 AND tipo = $2', 
+      [id, 'vendedor']
+    );
+
+    if (vendedorResult.rows.length === 0) {
+      req.flash('error', 'Vendedor não encontrado.');
+      return res.redirect('/admin/planos');
+    }
+    const vendedor = vendedorResult.rows[0];
+
+    // 2. Buscar Planos
+    const planosResult = await db.query('SELECT * FROM planos_vendedor ORDER BY preco_mensal ASC');
+
+    // 3. Buscar Plano Atual
+    let planoAtual = null;
+    if (vendedor.plano_id) {
+      const p = await db.query('SELECT * FROM planos_vendedor WHERE id = $1', [vendedor.plano_id]);
+      if (p.rows.length > 0) planoAtual = p.rows[0];
+    }
+
+    // 4. Renderizar
+    res.render('admin/gerenciar-loja', {
+      vendedor: vendedor,
+      planos: planosResult.rows,
+      planoAtual: planoAtual,
+      title: 'Gerenciar Loja',
+      user: req.session.user || null // Garante que o layout não quebre
+    });
+
+  } catch (error) {
+    console.error('Erro na rota GET /gerenciar:', error);
+    req.flash('error', 'Erro ao carregar tela de gerência: ' + error.message);
+    res.redirect('/admin/planos');
+  }
+});
+
+// ROTA 2: Salvar Mudança de Plano (POST)
+app.post('/admin/vendedor/:id/mudar-plano', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { novo_plano_id } = req.body;
+
+    if (!novo_plano_id) {
+        req.flash('error', 'Selecione um plano válido.');
+        return res.redirect(`/admin/vendedor/${id}/gerenciar`);
+    }
+
+    // Pegar limites do novo plano
+    const planoResult = await db.query('SELECT * FROM planos_vendedor WHERE id = $1', [novo_plano_id]);
+    if (planoResult.rows.length === 0) throw new Error('Plano não existe');
+    const novoPlano = planoResult.rows[0];
+
+    // Atualizar
+    await db.query(
+      'UPDATE usuarios SET plano_id = $1, limite_produtos = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+      [novoPlano.id, novoPlano.limite_produtos, id]
+    );
+
+    req.flash('success', 'Plano atualizado com sucesso!');
+    res.redirect(`/admin/vendedor/${id}/gerenciar`);
+
+  } catch (error) {
+    console.error('Erro na rota POST /mudar-plano:', error);
+    req.flash('error', 'Erro ao salvar: ' + error.message);
+    res.redirect(`/admin/vendedor/${req.params.id}/gerenciar`);
+  }
+});
+
 // ==================== ROTA DE RESTAURAÇÃO DE IMAGENS ====================
 app.get('/admin/restaurar-imagens', requireAdmin, async (req, res) => {
   try {
@@ -4693,6 +5639,7 @@ const server = app.listen(PORT, () => {
   ✅ Painéis administrativos prontos
   ✅ Sistema de planos implementado
   ✅ IMAGENS HÍBRIDAS PERSISTENTES IMPLEMENTADAS!
+  ✅ UPLOAD DE PERFIL E BANNER CORRIGIDO E FUNCIONAL!
   
   📍 Porta: ${PORT}
   🌐 Ambiente: ${process.env.NODE_ENV || 'development'}
@@ -4705,6 +5652,13 @@ const server = app.listen(PORT, () => {
     • Performance máxima: serve do disco quando existe
     • Recuperação automática: busca no banco quando não existe
     • Views EJS NÃO PRECISAM SER ALTERADAS!
+    
+  📁 Rotas de Upload Corrigidas:
+    • POST /perfil/atualizar (upload combinado)
+    • POST /perfil/upload-foto (apenas foto)
+    • POST /perfil/upload-banner (apenas banner)
+    • POST /perfil/remover-foto (remover foto)
+    • POST /perfil/remover-banner (remover banner)
     
   👤 Credenciais Admin:
     Email: admin@kuandashop.ao
@@ -4724,6 +5678,7 @@ const server = app.listen(PORT, () => {
     • Sistema de planos com limites
     • Loja de jogos completa
     • ✅ IMAGENS PERSISTENTES HÍBRIDAS (arquivo + bytea)
+    • ✅ UPLOAD DE PERFIL E BANNER FUNCIONAL
   
   💡 Recuperação de imagens: /admin/restaurar-imagens
   📁 SQL para criar tabela de backup no início deste arquivo
