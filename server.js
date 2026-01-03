@@ -226,11 +226,17 @@ const limparBackupsAntigos = async (daysOld = 30) => {
 
 // --- CONFIGURAÇÃO DO NODEMAILER ---
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // true para porta 465
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
-    }
+    },
+    tls: {
+        rejectUnauthorized: false // Ajuda em alguns casos de erro de certificado no Render
+    },
+    connectionTimeout: 10000 // Aumenta o tempo de espera para 10 segundos
 });
 
 // --- CONFIGURAÇÃO DO PASSPORT (GOOGLE) ---
@@ -2448,12 +2454,13 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
       await salvarBackupImagem(filePath, req.file.filename, 'usuarios', newUser.id);
     }
 
-    /* =======================
-       8. ENVIAR EMAIL (SE NÃO FOR GOOGLE)
-    ======================= */
-    if (!google_id) {
-      const linkConfirmacao = `${process.env.BASE_URL}/verificar-email/${tokenVerificacao}`;
+/* =======================
+    8. ENVIAR EMAIL (SE NÃO FOR GOOGLE)
+======================= */
+if (!google_id) {
+  const linkConfirmacao = `${process.env.BASE_URL}/verificar-email/${tokenVerificacao}`;
 
+  try {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: email,
@@ -2469,10 +2476,18 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
           <p>Ou copie: ${linkConfirmacao}</p>
         `
       });
-
       req.flash('success', 'Cadastro criado! Verifique seu e-mail para ativar a conta.');
-      return res.redirect('/login');
-    }
+  } catch (emailError) {
+      console.error("❌ Erro ao enviar e-mail de verificação:", emailError.message);
+      
+      // Opcional: Ativar a conta automaticamente se o e-mail falhar (apenas para evitar bloqueio)
+      // await db.query('UPDATE usuarios SET email_verificado = true WHERE id = $1', [newUser.id]);
+      
+      req.flash('warning', 'Conta criada, mas houve um erro ao enviar o e-mail de verificação. Tente logar ou contate o suporte.');
+  }
+
+  return res.redirect('/login');
+}
 
     /* =======================
        9. AUTO-LOGIN (GOOGLE)
