@@ -4490,34 +4490,37 @@ app.get('/planos', async (req, res) => {
     }
 });
 
-// 2. PROCESSAR ADESÃO (LÓGICA FINANCEIRA + WHATSAPP)
-// ROTA DE ASSINATURA COM NOTIFICAÇÃO AO ADMIN
+// ======================================================================
+// ROTA: PROCESSAR ASSINATURA (PLANOS)
+// ======================================================================
 app.post('/planos/aderir', requireAuth, async (req, res) => {
     const { tipo_plano, nome_plano, valor } = req.body;
     const userId = req.session.user.id;
 
     try {
-        await db.query(`
+        // 1. Cria Assinatura
+        const result = await db.query(`
             INSERT INTO assinaturas (usuario_id, tipo, valor, status, created_at)
-            VALUES ($1, $2, $3, 'pendente', NOW())
+            VALUES ($1, $2, $3, 'pendente', NOW()) RETURNING id
         `, [userId, tipo_plano, valor]);
+        
+        const assId = result.rows[0].id;
 
-        // Busca ID do Admin para notificar
+        // 2. NOTIFICA O ADMIN
         const adminRes = await db.query("SELECT id FROM usuarios WHERE tipo='admin' LIMIT 1");
-        const adminId = adminRes.rows.length > 0 ? adminRes.rows[0].id : 1;
-
-        // DISPARA NOTIFICAÇÃO
-        if (req.app.sysNotification) {
+        if (adminRes.rows.length > 0 && req.app.sysNotification) {
+            const adminId = adminRes.rows[0].id;
             await req.app.sysNotification(
-                userId, adminId,
-                `📄 Nova solicitação de plano: ${nome_plano} (${valor} Kz).`,
-                'sistema'
+                userId, // De: Cliente
+                adminId, // Para: Admin
+                `📄 Nova solicitação de assinatura: ${nome_plano} (Ref: #${assId})`, 
+                'sistema' // Tipo
             );
         }
 
         res.redirect('https://wa.me/244974120856?text=Solicitei+Plano');
     } catch (e) {
-        console.error(e);
+        console.error("Erro Plano:", e);
         res.redirect('/planos');
     }
 });
@@ -6606,72 +6609,74 @@ app.get('/checkout', requireAuth, (req, res) => {
   }
 });
 
-// ROTA DE CHECKOUT COM NOTIFICAÇÃO AUTOMÁTICA
+// ROTA CHECKOUT (COM NOTIFICAÇÃO CORRIGIDA)
 app.post('/checkout/processar', requireAuth, async (req, res) => {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const carrinho = req.session.carrinho || [];
-    if (carrinho.length === 0) throw new Error('Carrinho vazio');
-
-    // Agrupa itens por vendedor
-    const porVendedor = {};
-    carrinho.forEach(i => {
-      if(!porVendedor[i.vendedor_id]) porVendedor[i.vendedor_id] = [];
-      porVendedor[i.vendedor_id].push(i);
-    });
-
-    const userId = req.session.user.id;
-
-    for (const vid in porVendedor) {
-      const itens = porVendedor[vid];
-      const total = itens.reduce((s, i) => s + (i.preco * i.quantidade), 0);
-
-      // 1. Cria Pedido
-      const pRes = await client.query(`
-        INSERT INTO pedidos (usuario_id, vendedor_id, valor_total, status, created_at)
-        VALUES ($1, $2, $3, 'pendente', NOW()) RETURNING id
-      `, [userId, vid, total]);
-      const pedId = pRes.rows[0].id;
-
-      // 2. Insere Itens
-      for (const item of itens) {
-        await client.query(`
-          INSERT INTO itens_pedido (pedido_id, produto_id, quantidade, preco_unitario)
-          VALUES ($1, $2, $3, $4)
-        `, [pedId, item.id, item.quantidade, item.preco]);
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const carrinho = req.session.carrinho || [];
+      if (carrinho.length === 0) throw new Error('Carrinho vazio');
+  
+      // Agrupa itens por vendedor
+      const porVendedor = {};
+      carrinho.forEach(i => {
+        if(!porVendedor[i.vendedor_id]) porVendedor[i.vendedor_id] = [];
+        porVendedor[i.vendedor_id].push(i);
+      });
+  
+      const userId = req.session.user.id;
+  
+      for (const vid in porVendedor) {
+        const itens = porVendedor[vid];
+        const total = itens.reduce((s, i) => s + (i.preco * i.quantidade), 0);
+  
+        // 1. Cria Pedido
+        const pRes = await client.query(`
+          INSERT INTO pedidos (usuario_id, vendedor_id, valor_total, status, created_at)
+          VALUES ($1, $2, $3, 'pendente', NOW()) RETURNING id
+        `, [userId, vid, total]);
+        const pedId = pRes.rows[0].id;
+  
+        // 2. Insere Itens
+        for (const item of itens) {
+          await client.query(`
+            INSERT INTO itens_pedido (pedido_id, produto_id, quantidade, preco_unitario)
+            VALUES ($1, $2, $3, $4)
+          `, [pedId, item.id, item.quantidade, item.preco]);
+        }
+  
+        // 3. DISPARA NOTIFICAÇÕES (USANDO A NOVA FUNÇÃO CORRIGIDA)
+        if (app.sysNotification) {
+          // Para o Vendedor (Aviso de nova venda)
+          await app.sysNotification(
+              userId, vid, 
+              `📦 Novo pedido #${pedId} recebido (Kz ${total}).`, 
+              'compra', pedId
+          );
+          // Para o Cliente (Confirmação)
+          await app.sysNotification(
+              vid, userId, 
+              `✅ Pedido #${pedId} realizado com sucesso. Aguarde o envio.`, 
+              'status', pedId
+          );
+        }
       }
-
-      // 3. DISPARA NOTIFICAÇÃO (Aqui acontece a mágica)
-      if (req.app.sysNotification) {
-        // Para o Vendedor
-        await req.app.sysNotification(
-            userId, vid, 
-            `📦 Novo pedido #${pedId} recebido (Kz ${total}). Verifique o painel.`, 
-            'compra', pedId
-        );
-        // Para o Cliente (Confirmação)
-        await req.app.sysNotification(
-            vid, userId, 
-            `✅ Pedido #${pedId} enviado ao vendedor. Aguarde processamento.`, 
-            'status', pedId
-        );
-      }
+  
+      await client.query('COMMIT');
+      req.session.carrinho = [];
+      req.flash('success', 'Pedido realizado! Verifique suas notificações.');
+      res.redirect('/perfil');
+  
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error(error);
+      req.flash('error', 'Erro ao processar pedido.');
+      res.redirect('/carrinho');
+    } finally {
+      client.release();
     }
-
-    await client.query('COMMIT');
-    req.session.carrinho = [];
-    req.flash('success', 'Pedido realizado! Verifique suas notificações.');
-    res.redirect('/perfil');
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error(error);
-    res.redirect('/carrinho');
-  } finally {
-    client.release();
-  }
 });
+
 
 // ==================== INICIALIZAR SERVIDOR ====================
 const server = app.listen(PORT, () => {
