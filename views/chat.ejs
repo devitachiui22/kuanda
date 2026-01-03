@@ -6,16 +6,10 @@
     <title>Kuanda OS | Mensagens</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Favicon -->
-  <link rel="icon" type="image/png" sizes="32x32" href="/images/logo.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/images/logo.png">
-  <link rel="shortcut icon" href="/image/png" type="/images/logo.png">
-  <script src="/js/chat-monitor.js"></script>
-
+    <link rel="icon" type="image/png" sizes="32x32" href="/images/logo.png">
     
     <style>
         :root {
-            /* Variaveis CSS para Dark Mode */
             --primary: #E31C25;
             --primary-soft: #FEF2F2;
             --bg-body: #F3F4F6;
@@ -144,6 +138,17 @@
         .k-btn.ok { background: #ECFDF5; color: #059669; }
         .k-btn.bad { background: #FEF2F2; color: #DC2626; }
 
+        /* WIDGET DE NOTIFICAÇÃO */
+        .k-fab { position: fixed; bottom: 30px; left: 30px; width: 60px; height: 60px; background: #E31C25; color: white; border-radius: 50%; box-shadow: 0 4px 20px rgba(227, 28, 37, 0.4); display: flex; justify-content: center; align-items: center; cursor: pointer; z-index: 10000; transition: transform 0.2s; }
+        .k-fab:hover { transform: scale(1.05); }
+        .k-badge { position: absolute; top: 0; right: 0; background: #111827; color: white; border: 2px solid #fff; min-width: 22px; height: 22px; border-radius: 11px; font-size: 11px; font-weight: bold; display: flex; justify-content: center; align-items: center; padding: 0 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+
+        .k-pop { position: fixed; bottom: 100px; left: 30px; width: 300px; background: white; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); z-index: 10000; display: none; overflow: hidden; border: 1px solid #f0f0f0; animation: kSlideUp 0.4s ease-out; }
+        @keyframes kSlideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+        .k-pop-head { background: #f9fafb; padding: 12px 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #374151; }
+        .k-pop-body { padding: 15px; color: #4b5563; font-size: 14px; line-height: 1.4; }
+        .k-pop-act { display: block; width: 100%; padding: 10px; text-align: center; background: #E31C25; color: white; text-decoration: none; font-weight: 500; font-size: 13px; }
+
         /* RESPONSIVE */
         .back-btn { display: none; }
         @media (max-width: 1024px) {
@@ -157,13 +162,13 @@
             .k-chat { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 40; }
             .k-chat.active { display: flex; }
             .back-btn { display: flex; margin-right: 10px; cursor: pointer; }
+            .k-fab { display: none; } /* Esconde o botão flutuante na página do chat para não sobrepor */
         }
     </style>
 </head>
 <body>
 
 <div class="k-layout">
-    
     <!-- SIDEBAR -->
     <div class="k-sidebar" id="sidebar">
         <div class="k-header">
@@ -179,14 +184,8 @@
                 <input type="text" id="qInput" placeholder="Buscar..." onkeyup="loadChats()">
             </div>
         </div>
-
-        <div class="k-stories" id="storiesBar">
-            <div style="font-size:12px; padding:10px; color:var(--text-sub)">Carregando...</div>
-        </div>
-
-        <div class="k-list" id="chatList">
-            <!-- JS Chats -->
-        </div>
+        <div class="k-stories" id="storiesBar"><div style="font-size:12px; padding:10px; color:var(--text-sub)">Carregando...</div></div>
+        <div class="k-list" id="chatList"></div>
     </div>
 
     <!-- MAIN CHAT -->
@@ -202,24 +201,20 @@
             </div>
             <button class="icon-btn" onclick="toggleInfo()"><i class="fas fa-info-circle"></i></button>
         </div>
-
         <div class="msg-area" id="msgArea">
             <div style="text-align:center; margin-top:30vh; color:var(--text-sub)">
                 <i class="far fa-comments fa-3x" style="opacity:0.3; margin-bottom:15px"></i>
                 <p>Selecione um contato.</p>
             </div>
         </div>
-
         <div class="input-box" id="inputBox" style="visibility:hidden">
             <input type="file" id="fInp" hidden onchange="uploadFile(this)">
             <button class="k-btn-round" onclick="document.getElementById('fInp').click()"><i class="fas fa-paperclip"></i></button>
-            
             <div class="rec-ui" id="recUi">
                 <i class="fas fa-circle"></i> Gravando... <span id="recTime">0:00</span>
                 <i class="fas fa-times-circle" onclick="stopRec(false)" style="margin-left:auto; cursor:pointer; color:var(--text-main)"></i>
                 <i class="fas fa-check-circle" onclick="stopRec(true)" style="cursor:pointer; color:var(--primary)"></i>
             </div>
-
             <input type="text" class="k-field" id="msgInp" placeholder="Digite..." autocomplete="off">
             <button class="k-btn-round" id="micBtn" onclick="startRec()"><i class="fas fa-microphone"></i></button>
             <button class="k-btn-round btn-send" onclick="send()"><i class="fas fa-paper-plane"></i></button>
@@ -238,6 +233,21 @@
     </div>
 </div>
 
+<!-- ELEMENTOS DO WIDGET DE NOTIFICAÇÃO (OCULTOS INICIALMENTE) -->
+<div class="k-pop" id="kPop">
+    <div class="k-pop-head">
+        <span id="kFrom">Nova Notificação</span>
+        <i class="fas fa-times" style="cursor:pointer; color:#9ca3af" onclick="closeKPop()"></i>
+    </div>
+    <div class="k-pop-body" id="kText">...</div>
+    <a href="#" onclick="closeKPop(); return false;" class="k-pop-act">Fechar</a>
+</div>
+
+<audio id="kAudio" preload="auto">
+    <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
+</audio>
+
+<!-- LÓGICA DO CLIENTE (MISTURA CHAT + NOTIFICAÇÕES) -->
 <script>
     const myId = <%= user.id %>;
     let currChat = null;
@@ -246,23 +256,85 @@
     let audioChunks = [];
     let recInt = null;
 
+    // VARIAVEIS DE NOTIFICAÇÃO
+    let lastUnreadCount = 0;
+    let firstRun = true; // Impede beep no load
+    let popTimeout = null;
+
     document.addEventListener('DOMContentLoaded', () => {
-        loadStories();
-        loadChats();
-        
-        // Dark Mode Load
+        // Inicializa Dark Mode
         const theme = localStorage.getItem('theme') || 'light';
         document.documentElement.setAttribute('data-theme', theme);
 
+        // Carrega dados iniciais
+        loadStories();
+        loadChats();
+        monitorNotifications(); // Inicia o monitoramento global
+
+        // Polling do chat aberto e lista
         setInterval(() => {
             if(currChat) loadMsgs(currChat, false);
             loadChats();
+            monitorNotifications(); // Verifica notificações globais a cada ciclo
         }, 3000);
 
+        // Evento Enter
         document.getElementById('msgInp').addEventListener('keypress', e => {
             if(e.key === 'Enter') send();
         });
     });
+
+    // =======================================================
+    // FUNÇÕES DE NOTIFICAÇÃO GLOBAL (CORRIGIDAS)
+    // =======================================================
+    async function monitorNotifications() {
+        try {
+            const res = await fetch('/api/chat/check');
+            const data = await res.json();
+            const currentUnread = parseInt(data.unread || 0);
+
+            // Se o número de não lidas AUMENTOU, toca o som e mostra popup
+            // Isso evita beeps repetidos se o número se mantiver igual
+            if (currentUnread > lastUnreadCount) {
+                if (!firstRun) {
+                    playNotificationSound();
+                    showPopup(data.from, data.preview);
+                }
+            }
+
+            // Atualiza o contador anterior
+            lastUnreadCount = currentUnread;
+            firstRun = false;
+
+        } catch (err) {
+            console.error('Erro ao verificar notificações:', err);
+        }
+    }
+
+    function playNotificationSound() {
+        const audio = document.getElementById('kAudio');
+        audio.currentTime = 0; // Reinicia o som se já estiver tocando
+        audio.play().catch(e => console.log('Som bloqueado pelo navegador (falta interação).'));
+    }
+
+    function showPopup(from, text) {
+        const pop = document.getElementById('kPop');
+        document.getElementById('kFrom').innerText = from || 'Kuanda OS';
+        document.getElementById('kText').innerHTML = text || 'Você tem novas mensagens.';
+        
+        pop.style.display = 'block';
+        
+        if (popTimeout) clearTimeout(popTimeout);
+        popTimeout = setTimeout(closeKPop, 5000);
+    }
+
+    window.closeKPop = function() {
+        document.getElementById('kPop').style.display = 'none';
+    }
+
+    // =======================================================
+    // FUNÇÕES DO CHAT
+    // =======================================================
 
     function toggleTheme() {
         const cur = document.documentElement.getAttribute('data-theme');
@@ -295,16 +367,16 @@
         const res = await fetch(`/api/chat/conversas?q=${q}`);
         const chats = await res.json();
         const list = document.getElementById('chatList');
-        // Não limpa totalmente para evitar piscar, ideal seria diff, mas aqui recriamos
-        list.innerHTML = '';
-
+        
+        // Mantém a seleção visual
+        let html = '';
         chats.forEach(c => {
             const active = c.id === currChat ? 'active' : '';
             const img = c.foto ? `/uploads/perfil/${c.foto}` : `https://ui-avatars.com/api/?name=${c.titulo}&background=random`;
             const time = new Date(c.data).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
             const badge = c.nao_lidas > 0 ? `<span class="badge">${c.nao_lidas}</span>` : '';
             
-            list.innerHTML += `
+            html += `
                 <div class="chat-item ${active}" onclick="openChat(${c.id}, '${c.titulo}', '${img}', ${c.pedido_id})">
                     <img src="${img}" class="chat-avatar">
                     <div class="chat-info">
@@ -318,6 +390,7 @@
                 </div>
             `;
         });
+        list.innerHTML = html;
     }
 
     async function openChat(id, name, img, pid) {
@@ -330,6 +403,8 @@
         document.getElementById('inputBox').style.visibility = 'visible';
         document.getElementById('mainChat').classList.add('active');
 
+        // Reseta o contador para esta conversa localmente para evitar beep imediato
+        // O backend marca como lida na chamada loadMsgs
         await loadMsgs(id, true);
         if(pid) loadOrder(pid);
         else document.getElementById('infoContent').innerHTML = '<div style="text-align:center; margin-top:50px; color:var(--text-sub)">Conversa Direta</div>';
@@ -339,17 +414,18 @@
         const res = await fetch(`/api/chat/mensagens/${id}`);
         const data = await res.json();
         const area = document.getElementById('msgArea');
+        // Simplesmente substitui HTML (para produção ideal usar diffing, mas aqui atende)
         area.innerHTML = '';
 
         data.forEach(m => {
-            if(m.tipo_acao === 'status') {
+            if(m.tipo_acao === 'status' || m.tipo_acao === 'sistema') {
                 area.innerHTML += `<div class="msg msg-sys">${m.conteudo}</div>`;
+            } else if (m.tipo_acao === 'compra') {
+                area.innerHTML += `<div class="msg msg-sys" style="background:#dbeafe; color:#1e40af; border:1px solid #93c5fd;">🛍️ ${m.conteudo}</div>`;
             } else {
                 const cls = m.remetente_id === myId ? 'msg-me' : 'msg-other';
                 let content = '';
 
-                // VERIFICAÇÃO RIGOROSA PARA EVITAR "NULL"
-                // Se existe anexo_tipo E NÃO É TEXTO
                 if(m.anexo_tipo && m.anexo_tipo !== 'null' && m.tipo_acao !== 'texto') {
                     if(m.anexo_tipo.includes('image')) {
                         content = `<img src="/uploads/chat/${m.anexo_url}" class="msg-img" onclick="window.open(this.src)">`;
@@ -361,7 +437,6 @@
                         if(m.conteudo) content += `<div style="margin-top:5px">${m.conteudo}</div>`;
                     }
                 } else {
-                    // É TEXTO PURO
                     content = m.conteudo || ''; 
                 }
 
@@ -379,7 +454,7 @@
         if(scroll) area.scrollTop = area.scrollHeight;
     }
 
-async function loadOrder(pid) {
+    async function loadOrder(pid) {
         try {
             const res = await fetch(`/api/chat/pedido-detalhes/${pid}`);
             const data = await res.json();
@@ -392,9 +467,6 @@ async function loadOrder(pid) {
             const p = data.pedido;
             const itens = data.itens;
             
-            // Debug: Veja no console do navegador se as imagens estão vindo
-            console.log("Itens do pedido:", itens);
-
             let html = `
                 <div class="ped-card">
                     <div style="display:flex; justify-content:space-between">
@@ -411,40 +483,28 @@ async function loadOrder(pid) {
             `;
 
             itens.forEach(i => {
-            // CORREÇÃO DE DEBUG E SEGURANÇA
-            // Verifica se i.imagem1 é válido. Se for '[object Object]', define como null.
-            let nomeArquivo = i.imagem1;
-            
-            // Previne erro de conversão de objeto
-            if (nomeArquivo && (typeof nomeArquivo === 'object' || nomeArquivo.toString() === '[object Object]')) {
-                console.warn('Imagem inválida detectada no produto:', i.nome, i.imagem1);
-                nomeArquivo = null;
-            }
-
-            // Monta o caminho apenas se tivermos um nome de arquivo válido
-            const imgPath = (nomeArquivo && nomeArquivo.trim() !== '') 
-                ? `/uploads/produtos/${nomeArquivo}` 
-                : 'https://via.placeholder.com/60?text=Sem+Foto';
-            
-            html += `
-                <div class="item-row">
-                    <img src="${imgPath}" 
-                         class="item-img" 
-                         alt="${i.nome}"
-                         style="object-fit: cover; min-width:50px; min-height:50px;" 
-                         onerror="this.onerror=null;this.src='https://via.placeholder.com/60?text=Indisponível';">
-                         
-                    <div style="flex:1; overflow:hidden;">
-                        <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                            ${i.nome}
-                        </div>
-                        <div style="font-size:12px; color:var(--text-sub)">
-                            ${i.quantidade}x ${parseFloat(i.preco_unitario || i.preco_real).toFixed(2)} Kz
+                let nomeArquivo = i.imagem1;
+                if (nomeArquivo && (typeof nomeArquivo === 'object' || nomeArquivo.toString() === '[object Object]')) {
+                    nomeArquivo = null;
+                }
+                const imgPath = (nomeArquivo && nomeArquivo.trim() !== '') 
+                    ? `/uploads/produtos/${nomeArquivo}` 
+                    : 'https://via.placeholder.com/60?text=Sem+Foto';
+                
+                html += `
+                    <div class="item-row">
+                        <img src="${imgPath}" class="item-img" onerror="this.onerror=null;this.src='https://via.placeholder.com/60?text=Indisponível';">
+                        <div style="flex:1; overflow:hidden;">
+                            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                ${i.nome}
+                            </div>
+                            <div style="font-size:12px; color:var(--text-sub)">
+                                ${i.quantidade}x ${parseFloat(i.preco_unitario || i.preco_real).toFixed(2)} Kz
+                            </div>
                         </div>
                     </div>
-                </div>
-            `;
-        });
+                `;
+            });
 
             html += `</div>
                 <div style="margin-top:20px">
@@ -468,7 +528,7 @@ async function loadOrder(pid) {
         const fd = new FormData();
         fd.append('conversa_id', currChat);
         fd.append('conteudo', txt);
-        fd.append('tipo_especifico', 'texto'); // Garante que o backend saiba que é texto
+        fd.append('tipo_especifico', 'texto');
 
         await fetch('/api/chat/enviar', { method: 'POST', body: fd });
         inp.value = '';
@@ -480,10 +540,9 @@ async function loadOrder(pid) {
         const fd = new FormData();
         fd.append('conversa_id', currChat);
         fd.append('anexo', inp.files[0]);
-        // Backend vai detectar o tipo pelo mimetype
         await fetch('/api/chat/enviar', { method: 'POST', body: fd });
         loadMsgs(currChat, true);
-        inp.value = ''; // Limpa input
+        inp.value = ''; 
     }
 
     async function upStatus(st) {
@@ -504,7 +563,7 @@ async function loadOrder(pid) {
         const d = await res.json();
         loadChats();
         setTimeout(() => {
-            // Tenta abrir a nova conversa automaticamente
+            // Clica automaticamente no primeiro chat (o novo)
             const els = document.querySelectorAll('.chat-item');
             if(els.length) els[0].click();
         }, 500);
