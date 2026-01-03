@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="pt-AO">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciamento de Pedido #<%= pedido.codigo %></title>
+    
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* =========================================
+           KUANDA OS - ULTRA MODERN THEME
+           ========================================= */
+        :root {
+            --primary: #E31C25;
+            --primary-dark: #B91219;
+            --dark-bg: #09090B;
+            --card-bg: #FFFFFF;
+            --text-main: #18181B;
+            --text-muted: #71717A;
+            --border-light: #F4F4F5;
+            
+            --radius-lg: 24px;
+            --radius-xl: 32px;
+            
+            --shadow-soft: 0 8px 30px -6px rgba(0, 0, 0, 0.05);
+            --shadow-hover: 0 20px 40px -10px rgba(0, 0, 0, 0.08);
+            
+            --glass: rgba(255, 255, 255, 0.85);
+            --blur: blur(12px);
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #FAFAFA;
+            /* Fundo sutil geométrico */
+            background-image: radial-gradient(#E5E7EB 1px, transparent 1px);
+            background-size: 24px 24px;
+            color: var(--text-main);
+            padding-top: 100px; /* Espaço para a navbar fixa */
+            padding-bottom: 60px;
+        }
+
+        /* --- TOP BAR (FIXED & STABLE) --- */
+        .top-bar {
+            position: fixed; top: 0; left: 0; width: 100%;
+            height: 80px;
+            background: var(--glass);
+            backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            z-index: 1000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .top-bar-content {
+            width: 100%; max-width: 1200px; padding: 0 20px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .btn-back {
+            display: flex; align-items: center; gap: 10px;
+            background: white; border: 1px solid #E4E4E7;
+            padding: 10px 20px; border-radius: 100px;
+            font-weight: 700; color: var(--text-main); text-decoration: none;
+            transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+        }
+        .btn-back:hover { transform: translateX(-2px); border-color: #D4D4D8; background: #F8FAFC; color: var(--text-main); }
+
+        /* --- CARDS (BENTO GRID STYLE) --- */
+        .k-card {
+            background: var(--card-bg);
+            border-radius: var(--radius-lg);
+            border: 1px solid rgba(0,0,0,0.04);
+            box-shadow: var(--shadow-soft);
+            padding: 30px; margin-bottom: 24px;
+            position: relative; overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .k-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+
+        .card-header-k {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 25px; padding-bottom: 15px;
+            border-bottom: 2px dashed var(--border-light);
+        }
+        .card-title-k { font-size: 1.1rem; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+        
+        /* --- LISTA DE PRODUTOS --- */
+        .product-row {
+            display: flex; align-items: center; gap: 15px;
+            padding: 15px; border-radius: 16px;
+            border: 1px solid transparent; transition: 0.2s;
+        }
+        .product-row:hover { background: #FAFAFA; border-color: #F4F4F5; }
+        
+        .prod-img { width: 60px; height: 60px; object-fit: cover; border-radius: 12px; background: #eee; }
+        .prod-info h6 { margin: 0; font-weight: 700; font-size: 0.95rem; }
+        .prod-price { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+        .prod-total { font-weight: 800; font-size: 1rem; color: var(--primary); }
+
+        /* --- CONTROL PANEL (O Ponto Crítico) --- */
+        .control-panel {
+            background: #18181B; /* Dark Theme exclusivo para controles */
+            color: white;
+            border: 1px solid #27272A;
+        }
+        .control-panel .card-header-k { border-bottom-color: #3F3F46; }
+
+        /* Novo Seletor de Status (Radio Cards) - Substitui o Dropdown */
+        .status-selector-grid {
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        
+        .status-option {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 14px;
+            cursor: pointer; transition: 0.2s;
+            position: relative;
+        }
+        
+        /* Checkbox visual oculto */
+        .status-option input[type="radio"] { display: none; }
+        
+        /* Estados do seletor */
+        .status-option:hover { background: rgba(255,255,255,0.08); }
+        
+        .status-option.active {
+            background: white;
+            color: black;
+            border-color: white;
+            transform: scale(1.02);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            z-index: 2;
+        }
+        .status-option.active .status-desc { color: #555; }
+        
+        /* Cancelado (Vermelho) */
+        .status-option.active[data-val="cancelado"] {
+            background: var(--primary); color: white; border-color: var(--primary);
+        }
+        .status-option.active[data-val="cancelado"] .status-desc { color: rgba(255,255,255,0.8); }
+
+        .icon-box { width: 24px; display: flex; justify-content: center; }
+        .status-txt { font-weight: 700; font-size: 0.95rem; }
+        .status-desc { font-size: 0.75rem; color: #71717A; margin-left: auto; font-weight: 600; }
+
+        .btn-save-float {
+            width: 100%; background: var(--primary); border: none;
+            padding: 18px; border-radius: 16px; color: white;
+            font-weight: 800; font-size: 1rem; margin-top: 20px;
+            box-shadow: 0 10px 25px rgba(227, 28, 37, 0.25);
+            transition: 0.3s;
+        }
+        .btn-save-float:hover {
+            transform: translateY(-2px); box-shadow: 0 15px 35px rgba(227, 28, 37, 0.4);
+            background: var(--primary-dark);
+        }
+
+        /* --- CLIENTE --- */
+        .btn-whatsapp-modern {
+            background: #25D366; color: white; text-decoration: none;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            padding: 14px; border-radius: 16px; font-weight: 700;
+            margin-top: 15px; transition: 0.3s;
+        }
+        .btn-whatsapp-modern:hover { background: #20bd5a; transform: translateY(-2px); color: white; }
+
+        /* RESPONSIVIDADE */
+        @media (max-width: 992px) {
+            .order-grid { grid-template-columns: 1fr; }
+            .control-panel { order: -1; } /* Painel sobe no mobile para facilitar acesso */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- TOP BAR FIXA E SEGURA -->
+    <nav class="top-bar">
+        <div class="top-bar-content">
+            <a href="/vendedor/vendas" class="btn-back">
+                <i class="fa-solid fa-arrow-left"></i> <span>Voltar</span>
+            </a>
+            
+            <div class="d-flex align-items-center gap-3">
+                <div class="text-end d-none d-md-block">
+                    <div style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Área do Vendedor</div>
+                    <div style="font-weight: 700; font-size: 0.9rem;">Kuanda Store</div>
+                </div>
+                <div class="bg-dark text-white rounded-circle p-2 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                    <i class="fas fa-store"></i>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container" style="max-width: 1200px;">
+        
+        <!-- HEADER DO PEDIDO -->
+        <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-5 animate-up">
+            <div>
+                <% if (messages.success) { %>
+                    <div class="alert alert-success border-0 shadow-sm rounded-4 mb-3 d-inline-flex align-items-center gap-2 px-4 py-2">
+                        <i class="fas fa-check-circle"></i> <%= messages.success %>
+                    </div>
+                <% } %>
+                <h1 class="fw-900 m-0 display-5" style="letter-spacing: -1.5px;">Pedido #<%= pedido.codigo || pedido.id %></h1>
+                <div class="text-muted fw-600 mt-2 d-flex align-items-center gap-2">
+                    <i class="far fa-clock"></i> 
+                    <%= new Date(pedido.created_at).toLocaleString('pt-AO', { day: 'numeric', month: 'long', hour: '2-digit', minute:'2-digit' }) %>
+                </div>
+            </div>
+            
+            <!-- BADGE DE STATUS GRANDE -->
+            <% 
+                let stBg = '#f3f4f6'; let stColor = '#374151'; let stIcon = 'fa-circle';
+                if(pedido.status === 'pendente') { stBg = '#fff7ed'; stColor = '#c2410c'; stIcon = 'fa-clock'; }
+                if(pedido.status === 'confirmado') { stBg = '#eff6ff'; stColor = '#1d4ed8'; stIcon = 'fa-check-circle'; }
+                if(pedido.status === 'enviado') { stBg = '#fffbeb'; stColor = '#b45309'; stIcon = 'fa-truck'; }
+                if(pedido.status === 'entregue') { stBg = '#ecfdf5'; stColor = '#047857'; stIcon = 'fa-box-open'; }
+                if(pedido.status === 'cancelado') { stBg = '#fef2f2'; stColor = '#b91c1c'; stIcon = 'fa-times-circle'; }
+            %>
+            <div class="d-flex align-items-center gap-3 px-4 py-3 rounded-4" style="background: <%= stBg %>; color: <%= stColor %>; border: 1px solid rgba(0,0,0,0.05);">
+                <i class="fas <%= stIcon %> fs-4"></i>
+                <div>
+                    <div style="font-size: 0.7rem; font-weight: 800; text-transform: uppercase; opacity: 0.7;">Estado Atual</div>
+                    <div class="fw-900 fs-5 text-uppercase"><%= pedido.status %></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 order-grid">
+            <!-- COLUNA DA ESQUERDA: INFORMAÇÕES -->
+            <div class="col-lg-8">
+                <!-- LISTA DE PRODUTOS -->
+                <div class="k-card">
+                    <div class="card-header-k">
+                        <div class="card-title-k">
+                            <i class="fas fa-shopping-basket text-danger"></i> Itens do Pedido
+                        </div>
+                        <span class="badge bg-light text-dark rounded-pill border px-3"><%= itens.length %> itens</span>
+                    </div>
+
+                    <div class="d-flex flex-column gap-2">
+                        <% itens.forEach(item => { %>
+                            <div class="product-row">
+                                <img src="/uploads/produtos/<%= item.imagem1 %>" class="prod-img" onerror="this.src='https://via.placeholder.com/60'">
+                                <div class="flex-grow-1">
+                                    <h6><%= item.produto_nome %></h6>
+                                    <div class="prod-price"><%= parseFloat(item.preco_unitario).toLocaleString() %> Kz <span class="mx-1">•</span> Qtd: <%= item.quantidade %></div>
+                                </div>
+                                <div class="prod-total">
+                                    <%= (item.preco_unitario * item.quantidade).toLocaleString() %> Kz
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-top border-2 border-light d-flex justify-content-between align-items-center">
+                        <span class="text-muted fw-700 small">TOTAL DO PEDIDO</span>
+                        <span class="fs-3 fw-900 text-dark"><%= parseFloat(pedido.total).toLocaleString() %> Kz</span>
+                    </div>
+                </div>
+
+                <!-- DADOS DE ENTREGA E PAGAMENTO -->
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="k-card h-100">
+                            <div class="card-header-k">
+                                <div class="card-title-k"><i class="fas fa-map-marker-alt text-danger"></i> Entrega</div>
+                            </div>
+                            <p class="fw-600 text-secondary mb-0" style="line-height: 1.6;"><%= pedido.endereco_entrega %></p>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="k-card h-100">
+                            <div class="card-header-k">
+                                <div class="card-title-k"><i class="fas fa-credit-card text-danger"></i> Pagamento</div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="fas fa-wallet fs-5 text-muted"></i>
+                                <span class="fw-700 fs-5"><%= pedido.metodo_pagamento %></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COLUNA DA DIREITA: PAINEL DE CONTROLE (CORRIGIDO) -->
+            <div class="col-lg-4">
+                
+                <!-- PAINEL DE AÇÃO -->
+                <div class="k-card control-panel">
+                    <div class="card-header-k">
+                        <div class="card-title-k text-white">
+                            <i class="fas fa-sliders-h"></i> Painel de Controle
+                        </div>
+                    </div>
+                    
+                    <form action="/vendedor/pedido/<%= pedido.id %>/status" method="POST" id="formStatus">
+                        <input type="hidden" name="status" id="statusHidden" value="<%= pedido.status %>">
+                        
+                        <p class="small text-secondary fw-700 mb-3 text-uppercase">Alterar Status para:</p>
+
+                        <!-- LISTA DE SELEÇÃO DIRETA (FIM DOS PROBLEMAS DE DROPDOWN) -->
+                        <div class="status-selector-grid">
+                            
+                            <div class="status-option <%= pedido.status === 'pendente' ? 'active' : '' %>" onclick="setStatus('pendente', this)">
+                                <div class="icon-box"><i class="far fa-clock"></i></div>
+                                <span class="status-txt">Pendente</span>
+                                <span class="status-desc">Aguardando</span>
+                            </div>
+
+                            <div class="status-option <%= pedido.status === 'confirmado' ? 'active' : '' %>" onclick="setStatus('confirmado', this)">
+                                <div class="icon-box"><i class="fas fa-check"></i></div>
+                                <span class="status-txt">Confirmado</span>
+                                <span class="status-desc">Aceitar</span>
+                            </div>
+
+                            <div class="status-option <%= pedido.status === 'enviado' ? 'active' : '' %>" onclick="setStatus('enviado', this)">
+                                <div class="icon-box"><i class="fas fa-truck"></i></div>
+                                <span class="status-txt">Enviado</span>
+                                <span class="status-desc">Em rota</span>
+                            </div>
+
+                            <div class="status-option <%= pedido.status === 'entregue' ? 'active' : '' %>" onclick="setStatus('entregue', this)">
+                                <div class="icon-box"><i class="fas fa-box-open"></i></div>
+                                <span class="status-txt">Entregue</span>
+                                <span class="status-desc">Finalizar</span>
+                            </div>
+
+                            <div class="status-option <%= pedido.status === 'cancelado' ? 'active' : '' %>" onclick="setStatus('cancelado', this)" data-val="cancelado">
+                                <div class="icon-box"><i class="fas fa-times"></i></div>
+                                <span class="status-txt">Cancelado</span>
+                                <span class="status-desc">Recusar</span>
+                            </div>
+
+                        </div>
+
+                        <button type="submit" class="btn-save-float" id="btnSalvar">
+                            ATUALIZAR STATUS
+                        </button>
+                    </form>
+                </div>
+
+                <!-- INFO DO CLIENTE -->
+                <div class="k-card">
+                    <div class="card-header-k">
+                        <div class="card-title-k">Cliente</div>
+                        <small class="text-muted fw-bold">ID: <%= pedido.cliente_id %></small>
+                    </div>
+                    
+                    <div class="text-center mb-4">
+                        <div class="bg-light rounded-circle d-inline-flex p-3 mb-2 border">
+                            <i class="fas fa-user fs-2 text-secondary"></i>
+                        </div>
+                        <h5 class="fw-800 m-0"><%= pedido.cliente_nome %></h5>
+                        <small class="text-muted fw-600"><%= pedido.cliente_email %></small>
+                    </div>
+
+                    <% if (pedido.cliente_telefone) { %>
+                        <div class="d-flex justify-content-between align-items-center bg-light p-3 rounded-3 mb-3">
+                            <span class="small fw-700 text-uppercase text-muted">Contato</span>
+                            <span class="fw-800"><%= pedido.cliente_telefone %></span>
+                        </div>
+                        <a href="https://wa.me/<%= pedido.cliente_telefone.replace(/\D/g, '') %>" target="_blank" class="btn-whatsapp-modern">
+                            <i class="fab fa-whatsapp fs-5"></i> Falar com Cliente
+                        </a>
+                    <% } %>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Lógica de Seleção Visual (Impossível de falhar)
+        function setStatus(valor, elemento) {
+            // Atualiza o input hidden
+            document.getElementById('statusHidden').value = valor;
+            
+            // Remove classe 'active' de todos
+            document.querySelectorAll('.status-option').forEach(el => el.classList.remove('active'));
+            
+            // Adiciona ao clicado
+            elemento.classList.add('active');
+        }
+
+        // Feedback de carregamento
+        const form = document.getElementById('formStatus');
+        const btn = document.getElementById('btnSalvar');
+
+        if(form) {
+            form.addEventListener('submit', function() {
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> SALVANDO...';
+                btn.style.opacity = '0.8';
+                btn.style.pointerEvents = 'none';
+            });
+        }
+    </script>
+</body>
+</html>

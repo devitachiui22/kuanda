@@ -1,0 +1,227 @@
+<style>
+    /* DESIGN KUANDA CINEMA PREMIUM */
+    .cinema-detail-page {
+        background-color: #0f0f0f;
+        color: #fff;
+        min-height: 100vh;
+        padding-bottom: 80px;
+    }
+
+    /* Banner Gigante com Gradiente */
+    .cinema-header {
+        position: relative;
+        height: 60vh;
+        width: 100%;
+        overflow: hidden;
+    }
+    .cinema-banner-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        mask-image: linear-gradient(to bottom, black 20%, transparent 100%);
+        -webkit-mask-image: linear-gradient(to bottom, black 20%, transparent 100%);
+        opacity: 0.6;
+    }
+    .header-overlay {
+        position: absolute;
+        bottom: 0; left: 0; width: 100%;
+        padding: 40px 5%;
+        display: flex;
+        align-items: flex-end;
+        gap: 40px;
+    }
+
+    /* Pôster Flutuante */
+    .movie-poster-card {
+        width: 220px;
+        border-radius: 12px;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        border: 1px solid rgba(255,255,255,0.1);
+        z-index: 2;
+        transition: transform 0.3s;
+    }
+    .movie-poster-card:hover { transform: scale(1.02); }
+
+    /* Info */
+    .movie-info h1 {
+        font-size: 3.5rem;
+        font-weight: 800;
+        margin-bottom: 10px;
+        letter-spacing: -1px;
+        text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+    .meta-badges span {
+        background: rgba(255,255,255,0.15);
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-right: 8px;
+        backdrop-filter: blur(5px);
+    }
+
+    /* Área de Conteúdo */
+    .content-area {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 20px;
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 50px;
+    }
+
+    /* Links e Episódios */
+    .links-card {
+        background: #1a1a1a;
+        border-radius: 16px;
+        padding: 25px;
+        border: 1px solid #333;
+    }
+    .link-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        border-bottom: 1px solid #333;
+        transition: 0.2s;
+    }
+    .link-item:hover { background: #252525; }
+    .link-item:last-child { border-bottom: none; }
+    
+    .btn-download {
+        background: #E31C25;
+        color: white;
+        padding: 8px 20px;
+        border-radius: 50px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        text-decoration: none;
+    }
+    .btn-download:hover { background: #ff3b30; color: white; }
+
+    /* Área de Compra */
+    .buy-gate {
+        text-align: center;
+        padding: 40px;
+        background: rgba(227, 28, 37, 0.05);
+        border: 1px dashed #E31C25;
+        border-radius: 16px;
+    }
+
+    @media(max-width: 768px) {
+        .cinema-header { height: auto; padding-top: 80px; }
+        .header-overlay { flex-direction: column; align-items: center; text-align: center; position: relative; }
+        .movie-poster-card { width: 180px; margin-bottom: 20px; }
+        .content-area { grid-template-columns: 1fr; }
+        .movie-info h1 { font-size: 2rem; }
+    }
+</style>
+
+<div class="cinema-detail-page">
+    
+    <!-- HEADER -->
+    <div class="cinema-header">
+        <img src="<%= filme.banner ? '/uploads/filmes/' + filme.banner : '/uploads/filmes/' + filme.poster %>" class="cinema-banner-img">
+        
+        <div class="header-overlay">
+            <img src="/uploads/filmes/<%= filme.poster %>" class="movie-poster-card">
+            
+            <div class="movie-info">
+                <h1><%= filme.titulo %></h1>
+                <div class="meta-badges mb-3">
+                    <span><%= new Date(filme.data_lancamento).getFullYear() %></span>
+                    <span><%= filme.classificacao %></span>
+                    <span><%= filme.tipo === 'serie' ? 'Série' : 'Filme' %></span>
+                    <% if(filme.preco > 0) { %>
+                        <span class="bg-warning text-dark">Premium</span>
+                    <% } else { %>
+                        <span class="bg-success">Grátis</span>
+                    <% } %>
+                </div>
+                <div class="d-flex gap-3 flex-wrap justify-content-center justify-content-md-start">
+                    <% if (filme.trailer_url) { %>
+                        <a href="<%= filme.trailer_url %>" target="_blank" class="btn btn-outline-light rounded-pill px-4">
+                            <i class="fas fa-play me-2"></i>Trailer
+                        </a>
+                    <% } %>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTEÚDO -->
+    <div class="content-area">
+        
+        <!-- Esquerda: Sinopse e Links -->
+        <div>
+            <h4 class="fw-bold mb-3 border-start border-4 border-danger ps-3">Sinopse</h4>
+            <p class="text-secondary mb-5" style="line-height: 1.8; font-size: 1.1rem;">
+                <%= filme.sinopse %>
+            </p>
+
+            <!-- LÓGICA DE ACESSO -->
+            <h4 class="fw-bold mb-3 border-start border-4 border-danger ps-3">
+                <%= filme.tipo === 'serie' ? 'Episódios / Temporadas' : 'Downloads Disponíveis' %>
+            </h4>
+
+            <% if (temAcesso) { %>
+                <!-- LINKS LIBERADOS -->
+                <div class="links-card">
+                    <% if (links.length > 0) { %>
+                        <% links.forEach(link => { %>
+                            <div class="link-item">
+                                <div class="d-flex align-items-center gap-3">
+                                    <i class="fas fa-file-video text-danger fs-4"></i>
+                                    <span class="fw-bold"><%= link.label %></span>
+                                </div>
+                                <a href="<%= link.url %>" target="_blank" class="btn-download">
+                                    <i class="fas fa-download me-2"></i>Baixar
+                                </a>
+                            </div>
+                        <% }) %>
+                    <% } else { %>
+                        <div class="text-center py-4 text-muted">Em breve links disponíveis.</div>
+                    <% } %>
+                </div>
+
+            <% } else if (pedidoPendente) { %>
+                <!-- PEDIDO EM ANÁLISE -->
+                <div class="alert alert-warning text-center p-4 rounded-4 border-0">
+                    <i class="fas fa-clock fa-3x mb-3"></i>
+                    <h4>Pagamento em Análise</h4>
+                    <p>Você já solicitou este título. Aguarde a liberação do administrador.</p>
+                </div>
+
+            <% } else { %>
+                <!-- BLOQUEIO DE PAGAMENTO -->
+                <div class="buy-gate">
+                    <i class="fas fa-crown text-warning fa-3x mb-3"></i>
+                    <h3>Conteúdo Premium</h3>
+                    <p class="text-muted">Este título é exclusivo. Adquira para liberar todos os links de download em alta qualidade.</p>
+                    <h2 class="text-white fw-bold my-3"><%= parseFloat(filme.preco).toLocaleString('pt-AO', {style: 'currency', currency: 'AOA'}) %></h2>
+                    
+                    <form action="/filme/<%= filme.id %>/comprar" method="POST">
+                        <button type="submit" class="btn btn-danger btn-lg rounded-pill px-5 fw-bold shadow">
+                            Comprar Agora
+                        </button>
+                    </form>
+                    <small class="d-block mt-3 text-muted">Após clicar, confirme o pagamento com o Admin.</small>
+                </div>
+            <% } %>
+
+        </div>
+
+        <!-- Direita: Detalhes Técnicos -->
+        <div>
+            <div class="p-4 rounded-4" style="background: #1a1a1a;">
+                <h5 class="fw-bold text-white mb-3">Detalhes</h5>
+                <ul class="list-unstyled text-secondary">
+                    <li class="mb-2"><strong class="text-light">Qualidade:</strong> 1080p / 4K</li>
+                    <li class="mb-2"><strong class="text-light">Audio:</strong> Dual Áudio</li>
+                    <li class="mb-2"><strong class="text-light">Adicionado:</strong> <%= new Date(filme.created_at).toLocaleDateString() %></li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+</div>
