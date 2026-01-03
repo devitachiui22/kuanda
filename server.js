@@ -14,6 +14,7 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const https = require('https');
 const vendasRoutes = require('./routes/gerenciar-vendas');
 require('dotenv').config();
 
@@ -2665,49 +2666,302 @@ app.post('/resetar-senha/:token', async (req, res) => {
     }
 });
 
-// ==================== ROTAS DE PERFIL ====================
+// ======================================================================
+// 0. AUTO-CORREÇÃO E VERIFICAÇÃO DO BANCO DE DADOS
+// ======================================================================
+async function initDatabaseSchema() {
+    console.log("🔧 [SYSTEM] Verificando integridade do Banco de Dados...");
+    try {
+        // 1. Garante coluna plano_id em usuarios
+        await db.query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='usuarios' AND column_name='plano_id') THEN 
+                    ALTER TABLE usuarios ADD COLUMN plano_id INTEGER DEFAULT NULL;
+                    RAISE NOTICE 'Coluna plano_id adicionada.';
+                END IF;
+            END $$;
+        `);
+
+        // 2. Garante tabela assinaturas
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS assinaturas (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER REFERENCES usuarios(id),
+                tipo VARCHAR(50), valor DECIMAL(10,2), status VARCHAR(20) DEFAULT 'pendente',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                data_inicio TIMESTAMP, data_fim TIMESTAMP
+            );
+        `);
+        
+        // 3. Garante tabela pedidos_acesso
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS pedidos_acesso (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER REFERENCES usuarios(id),
+                jogo_id INTEGER REFERENCES jogos(id),
+                filme_id INTEGER REFERENCES filmes(id),
+                status VARCHAR(20) DEFAULT 'pendente',
+                updated_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        console.log("✅ [SYSTEM] Banco de dados verificado e pronto.");
+    } catch (error) {
+        console.error("❌ [SYSTEM] Erro no Schema:", error.message);
+    }
+}
+// Executa a verificação ao iniciar
+initDatabaseSchema();
+
+
+// ======================================================================
+// 1. ROTA DE PERFIL (QUERY UNIFICADA E CORRIGIDA)
+// ======================================================================
 app.get('/perfil', requireAuth, async (req, res) => {
-  try {
-    const usuario = await db.query('SELECT * FROM usuarios WHERE id = $1', [req.session.user.id]);
+    console.log("\n>>> [PERFIL] Carregando dados para User ID:", req.session.user.id);
     
-    if (usuario.rows.length === 0) {
-      req.flash('error', 'Usuário não encontrado');
-      return res.redirect('/');
+    try {
+        const userId = req.session.user.id;
+
+        const [
+            usuarioResult,      // 0. Usuário
+            pedidosResult,      // 1. Compras Físicas
+            assinaturasResult,  // 2. Planos
+            jogosResult,        // 3. Biblioteca Jogos (Permanente + Aprovados)
+            filmesResult,       // 4. Filmes Ativos (Permanente + Aprovados)
+            solicitacoesResult  // 5. Apenas Pendentes
+        ] = await Promise.all([
+            
+            // 0. USUÁRIO
+            db.query(`
+                SELECT u.*, pv.nome as plano_vendedor_nome 
+                FROM usuarios u 
+                LEFT JOIN planos_vendedor pv ON u.plano_id = pv.id 
+                WHERE u.id = $1
+            `, [userId]),
+            
+            // 1. PEDIDOS FÍSICOS
+            db.query(`SELECT * FROM pedidos WHERE usuario_id = $1 ORDER BY created_at DESC`, [userId]),
+            
+            // 2. ASSINATURAS
+            db.query(`SELECT * FROM assinaturas WHERE usuario_id = $1 ORDER BY created_at DESC`, [userId]),
+            
+            // 3. JOGOS (Usei UNION para pegar os da biblioteca E os pedidos aprovados)
+            db.query(`
+                SELECT j.id, j.titulo, j.capa, b.data_aquisicao, 'vitalicio' as origem
+                FROM jogos j
+                JOIN biblioteca_jogos b ON j.id = b.jogo_id
+                WHERE b.usuario_id = $1
+                UNION
+                SELECT j.id, j.titulo, j.capa, pa.created_at as data_aquisicao, 'aprovado' as origem
+                FROM pedidos_acesso pa
+                JOIN jogos j ON pa.jogo_id = j.id
+                WHERE pa.usuario_id = $1 AND pa.status = 'aprovado'
+            `, [userId]),
+            
+            // 4. FILMES (Usei UNION para pegar assinaturas ativas E pedidos aprovados)
+            db.query(`
+                SELECT f.id, f.titulo, f.poster, af.data_expiracao, 'ativo' as origem
+                FROM filmes f
+                JOIN assinaturas_filmes af ON f.id = af.filme_id
+                WHERE af.usuario_id = $1 AND af.status = 'ativo'
+                UNION
+                SELECT f.id, f.titulo, f.poster, NULL as data_expiracao, 'aprovado' as origem
+                FROM pedidos_acesso pa
+                JOIN filmes f ON pa.filme_id = f.id
+                WHERE pa.usuario_id = $1 AND pa.status = 'aprovado'
+            `, [userId]),
+            
+            // 5. SOLICITAÇÕES (ESTRITAMENTE PENDENTES)
+            db.query(`
+                SELECT pa.*, 
+                       j.titulo as jogo_titulo, j.capa as jogo_capa,
+                       f.titulo as filme_titulo, f.poster as filme_poster
+                FROM pedidos_acesso pa
+                LEFT JOIN jogos j ON pa.jogo_id = j.id
+                LEFT JOIN filmes f ON pa.filme_id = f.id
+                WHERE pa.usuario_id = $1 AND pa.status = 'pendente'
+                ORDER BY pa.created_at DESC
+            `, [userId])
+        ]);
+
+        if (usuarioResult.rows.length === 0) {
+            req.session.destroy();
+            return res.redirect('/');
+        }
+
+        const usuario = usuarioResult.rows[0];
+
+        // Processamento para separar Jogos e Filmes Pendentes para o EJS
+        const pedidosJogos = solicitacoesResult.rows
+            .filter(r => r.jogo_id !== null)
+            .map(r => ({
+                id: r.id,
+                titulo: r.jogo_titulo,
+                capa: r.jogo_capa,
+                status: 'pendente', // Garante que visualmente apareça pendente
+                created_at: r.created_at
+            }));
+
+        const pedidosFilmes = solicitacoesResult.rows
+            .filter(r => r.filme_id !== null)
+            .map(r => ({
+                id: r.id,
+                titulo: r.filme_titulo,
+                poster: r.filme_poster,
+                status: 'pendente',
+                created_at: r.created_at
+            }));
+
+        // Remoção de duplicados na biblioteca (caso exista nas duas tabelas por erro antigo)
+        const meusJogosUnicos = [...new Map(jogosResult.rows.map(item => [item['id'], item])).values()];
+
+        console.log(`> Dados carregados: ${meusJogosUnicos.length} Jogos na Lib | ${pedidosJogos.length} Jogos Pendentes`);
+
+        res.render('perfil', {
+            usuario: usuario,
+            planoInfo: usuario.plano_vendedor_nome ? { nome: usuario.plano_vendedor_nome } : null,
+            
+            pedidos: pedidosResult.rows,
+            assinaturas: assinaturasResult.rows,
+            
+            // Listas que combinam permanente + aprovado
+            meus_jogos: meusJogosUnicos,
+            assinaturas_filmes: filmesResult.rows,
+            
+            // Listas apenas de pendentes
+            pedidosJogos: pedidosJogos,
+            pedidosFilmes: pedidosFilmes,
+            
+            messages: req.flash()
+        });
+
+    } catch (error) {
+        console.error("!!! ERRO CRÍTICO NO PERFIL !!!", error);
+        req.flash('error', 'Erro ao carregar perfil.');
+        res.redirect('/');
     }
+});
 
-    // Buscar informações do plano se for vendedor
-    let planoInfo = null;
-    if (req.session.user.tipo === 'vendedor' && usuario.rows[0].plano_id) {
-      planoInfo = await db.query(
-        'SELECT * FROM planos_vendedor WHERE id = $1',
-        [usuario.rows[0].plano_id]
-      );
+// ======================================================================
+// 2. ROTA DETALHES DO PEDIDO (Físico)
+// ======================================================================
+app.get('/pedido/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.session.user.id;
+    try {
+        const pedido = await db.query('SELECT * FROM pedidos WHERE id = $1 AND usuario_id = $2', [id, userId]);
+        if (pedido.rows.length === 0) return res.redirect('/perfil');
+
+        const itens = await db.query(`
+            SELECT ip.*, p.nome, p.imagem_principal
+            FROM itens_pedido ip
+            JOIN produtos p ON ip.produto_id = p.id
+            WHERE ip.pedido_id = $1
+        `, [id]);
+
+        res.render('pedido-detalhes', {
+            pedido: pedido.rows[0],
+            itens: itens.rows,
+            usuario: req.session.user
+        });
+    } catch (error) {
+        console.error(error);
+        res.redirect('/perfil');
     }
+});
 
-    // Contar produtos cadastrados
-    const produtosCount = await db.query(
-      'SELECT COUNT(*) as total FROM produtos WHERE vendedor_id = $1',
-      [req.session.user.id]
-    );
+// ======================================================================
+// 3. ROTA DE ASSINATURA (Solicitar)
+// ======================================================================
+app.post('/assinatura/solicitar', requireAuth, async (req, res) => {
+    const { tipo_plano, nome_plano, valor } = req.body;
+    const userId = req.session.user.id;
 
-    res.render('perfil', { 
-      usuario: usuario.rows[0],
-      planoInfo: planoInfo ? planoInfo.rows[0] : null,
-      produtosCadastrados: produtosCount.rows[0].total,
-      currentUser: req.session.user,
-      title: 'Meu Perfil - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar perfil:', error);
-    req.flash('error', 'Erro ao carregar perfil');
-    res.render('perfil', { 
-      usuario: {},
-      planoInfo: null,
-      produtosCadastrados: 0,
-      currentUser: req.session.user,
-      title: 'Meu Perfil'
-    });
-  }
+    try {
+        const check = await db.query("SELECT id FROM assinaturas WHERE usuario_id = $1 AND status = 'pendente'", [userId]);
+        if (check.rows.length > 0) {
+            req.flash('error', 'Já existe um pedido em análise.');
+            return res.redirect('/perfil');
+        }
+
+        await db.query(`
+            INSERT INTO assinaturas (usuario_id, tipo, valor, status, created_at)
+            VALUES ($1, $2, $3, 'pendente', NOW())
+        `, [userId, tipo_plano, valor]);
+
+        res.redirect(`https://wa.me/244900000000?text=Solicito plano ${nome_plano} ID:${userId}`);
+    } catch (error) {
+        console.error(error);
+        res.redirect('/perfil');
+    }
+});
+
+// ======================================================================
+// 4. ADMIN: LISTAR ASSINATURAS
+// ======================================================================
+app.get('/admin/assinaturas', requireAdmin, async (req, res) => {
+    try {
+        const pendentes = await db.query(`SELECT a.*, u.nome, u.email FROM assinaturas a JOIN usuarios u ON a.usuario_id = u.id WHERE a.status = 'pendente' ORDER BY a.created_at ASC`);
+        const historico = await db.query(`SELECT a.*, u.nome FROM assinaturas a JOIN usuarios u ON a.usuario_id = u.id WHERE a.status != 'pendente' ORDER BY a.created_at DESC LIMIT 20`);
+        res.render('admin/assinaturas', { solicitacoes: pendentes.rows, historico: historico.rows });
+    } catch (e) { res.redirect('/admin/dashboard'); }
+});
+
+// ======================================================================
+// 5. ADMIN: APROVAR ASSINATURA (Atualiza Status e Usuário)
+// ======================================================================
+app.post('/admin/assinaturas/:id/aprovar', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    console.log(`> [ADMIN] Aprovando assinatura ID: ${id}`);
+    
+    try {
+        const assResult = await db.query('SELECT * FROM assinaturas WHERE id = $1', [id]);
+        if (assResult.rows.length === 0) return res.redirect('/admin/assinaturas');
+        
+        const assinatura = assResult.rows[0];
+        const dataFim = new Date(); dataFim.setDate(dataFim.getDate() + 30);
+
+        let updateQuery = "";
+        if (assinatura.tipo === 'gamer_premium') updateQuery = "premium_games_ate = $1";
+        else if (assinatura.tipo === 'cine_premium') updateQuery = "premium_cine_ate = $1";
+        else updateQuery = "premium_games_ate = $1, premium_cine_ate = $1";
+
+        if (updateQuery) await db.query(`UPDATE usuarios SET ${updateQuery} WHERE id = $2`, [dataFim, assinatura.usuario_id]);
+        
+        await db.query(`UPDATE assinaturas SET status = 'aprovado', data_inicio = NOW(), data_fim = $1 WHERE id = $2`, [dataFim, id]);
+        
+        req.flash('success', 'Assinatura Aprovada!');
+        res.redirect('/admin/assinaturas');
+
+    } catch (error) {
+        console.error(error);
+        req.flash('error', 'Erro ao aprovar.');
+        res.redirect('/admin/assinaturas');
+    }
+});
+
+// ======================================================================
+// 6. ADMIN: APROVAR PEDIDOS DE JOGOS/FILMES (Nova Rota Essencial)
+// ======================================================================
+app.post('/admin/pedidos-acesso/:id/aprovar', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Atualiza status para 'aprovado'
+        await db.query("UPDATE pedidos_acesso SET status = 'aprovado', updated_at = NOW() WHERE id = $1", [id]);
+        
+        // (Opcional) Inserir na biblioteca definitiva para redundância
+        // Mas a rota /perfil já lê os aprovados, então isso basta para mostrar.
+        
+        req.flash('success', 'Pedido aprovado!');
+        res.redirect('/admin/solicitacoes'); // Ajuste para sua rota de lista
+    } catch (error) {
+        console.error(error);
+        req.flash('error', 'Erro ao aprovar pedido.');
+        res.redirect('/admin/dashboard');
+    }
 });
 
 // ======================================================================
@@ -3611,206 +3865,398 @@ app.post('/vendedor/produto/:id/solicitar-vip', requireVendor, async (req, res) 
 });
 
 // =======================================================
-// CONFIGURAÇÃO ESPECIAL DE UPLOAD PARA JOGOS
+// 1. CONFIGURAÇÃO DE UPLOAD PARA JOGOS (Multer)
 // =======================================================
 const gameUpload = upload.fields([
-  { name: 'capa', maxCount: 1 },
-  { name: 'banner', maxCount: 1 },
-  { name: 'screenshots', maxCount: 10 } // Aumentado para evitar erros de limite
+    { name: 'capa', maxCount: 1 },         // Capa Vertical
+    { name: 'banner', maxCount: 1 },       // Banner Horizontal
+    { name: 'screenshots', maxCount: 10 }  // Galeria de Imagens
 ]);
 
 // =======================================================
-// FUNÇÃO AUXILIAR — SALVAR MÚLTIPLOS LINKS
+// 2. FUNÇÃO AUXILIAR: SALVAR LINKS DINÂMICOS
 // =======================================================
 async function salvarLinksJogo(jogoId, labels, urls) {
-  try {
-    // 1. Limpa links antigos (crucial para edição)
-    await db.query('DELETE FROM jogo_links WHERE jogo_id = $1', [jogoId]);
+    try {
+        // 1. Limpa links antigos para evitar duplicidade na edição
+        await db.query('DELETE FROM jogo_links WHERE jogo_id = $1', [jogoId]);
 
-    // 2. Verificação de segurança: se não vier nada, sai
-    if (!urls) return;
+        // 2. Se não houver URLs, encerra
+        if (!urls) return;
 
-    // 3. Normaliza para array (Trata o caso de vir 1 string ou vários em Array)
-    const labelsArray = Array.isArray(labels) ? labels : [labels].filter(Boolean);
-    const urlsArray = Array.isArray(urls) ? urls : [urls].filter(Boolean);
+        // 3. Normaliza para Array (caso venha apenas um campo string)
+        const labelsArray = Array.isArray(labels) ? labels : [labels];
+        const urlsArray = Array.isArray(urls) ? urls : [urls];
 
-    // 4. Itera e insere
-    for (let i = 0; i < urlsArray.length; i++) {
-      const url = urlsArray[i]?.trim();
-      const label = labelsArray[i]?.trim() || `Download ${i + 1}`;
+        // 4. Itera e insere no banco
+        for (let i = 0; i < urlsArray.length; i++) {
+            const url = urlsArray[i] ? urlsArray[i].trim() : '';
+            // Usa o label fornecido ou cria um padrão "Download X"
+            const label = (labelsArray[i] && labelsArray[i].trim() !== '') ? labelsArray[i].trim() : `Opção ${i + 1}`;
 
-      if (url) {
-        await db.query(
-          'INSERT INTO jogo_links (jogo_id, label, url) VALUES ($1, $2, $3)',
-          [jogoId, label, url]
-        );
-      }
+            if (url !== '') {
+                await db.query(
+                    'INSERT INTO jogo_links (jogo_id, label, url, ordem) VALUES ($1, $2, $3, $4)',
+                    [jogoId, label, url, i] // 'i' define a ordem de exibição
+                );
+            }
+        }
+    } catch (err) {
+        console.error("Erro crítico ao salvar links do jogo:", err);
+        throw new Error("Falha ao salvar os links de download.");
     }
-    console.log(`Links salvos para o jogo ${jogoId}`);
-  } catch (err) {
-    console.error("Erro crítico ao salvar links extras:", err);
-  }
 }
 
 // =======================================================
-// ROTAS ADMIN: GERENCIAR JOGOS
+// 3. ROTAS ADMIN: GERENCIAMENTO DE JOGOS
 // =======================================================
 
-// 1. LISTAR JOGOS
+// A. LISTAR JOGOS
 app.get('/admin/jogos', requireAdmin, async (req, res) => {
-  try {
-    const { rows: jogos } = await db.query(`SELECT * FROM jogos ORDER BY created_at DESC`);
-    res.render('admin/jogos', { title: 'Gerir Jogos', jogos: jogos });
-  } catch (error) {
-    console.error('Erro ao carregar jogos:', error);
-    req.flash('error', 'Erro ao carregar jogos');
-    res.redirect('/admin');
-  }
+    try {
+        const result = await db.query(`SELECT * FROM jogos ORDER BY created_at DESC`);
+        res.render('admin/jogos', { 
+            title: 'Gerenciar Jogos - Admin', 
+            jogos: result.rows 
+        });
+    } catch (error) {
+        console.error('Erro ao listar jogos:', error);
+        req.flash('error', 'Erro ao carregar a lista de jogos.');
+        res.redirect('/admin');
+    }
 });
 
-// 2. FORMULÁRIO NOVO JOGO
+// B. FORMULÁRIO NOVO
 app.get('/admin/jogos/novo', requireAdmin, (req, res) => {
-  res.render('admin/jogo_form', { 
-    jogo: null, 
-    links: [], // Array vazio para não quebrar o EJS
-    action: '/admin/jogos',
-    title: 'Novo Jogo - Admin'
-  });
+    res.render('admin/jogo_form', { 
+        jogo: null, 
+        links: [], // Array vazio para não quebrar o loop no EJS
+        action: '/admin/jogos',
+        title: 'Novo Jogo' 
+    });
 });
 
-// 3. CRIAR JOGO (POST)
+// C. CRIAR JOGO (POST)
 app.post('/admin/jogos', requireAdmin, gameUpload, async (req, res) => {
-  try {
+    // Extrai dados do formulário
     const { 
-      titulo, preco, plataforma, genero, trailer_url, 
-      descricao, requisitos, desenvolvedor, classificacao, ativo,
-      links_labels, links_urls 
+        titulo, preco, plataforma, genero, trailer_url, 
+        descricao, requisitos, classificacao, ativo, 
+        links_labels, links_urls 
+    } = req.body;
+  
+    try {
+        // Validação de Arquivos
+        if (!req.files || !req.files['capa']) {
+            throw new Error('A imagem de CAPA é obrigatória.');
+        }
+
+        const capa = req.files['capa'][0].filename;
+        const banner = req.files['banner'] ? req.files['banner'][0].filename : null;
+        // Mapeia array de screenshots se existirem
+        const screenshots = req.files['screenshots'] ? req.files['screenshots'].map(f => f.filename) : [];
+
+        // Inserção no Banco
+        const result = await db.query(`
+            INSERT INTO jogos (
+                titulo, capa, banner, screenshots, preco, plataforma, genero, 
+                trailer_url, descricao, requisitos, classificacao, ativo
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING id
+        `, [
+            titulo.trim(),
+            capa,
+            banner,
+            screenshots, // O driver do PG converte array JS para array SQL automaticamente
+            parseFloat(preco) || 0,
+            plataforma,
+            genero,
+            trailer_url,
+            descricao,
+            requisitos,
+            classificacao,
+            ativo === 'on'
+        ]);
+
+        const novoJogoId = result.rows[0].id;
+
+        // Salvar Links Dinâmicos
+        await salvarLinksJogo(novoJogoId, links_labels, links_urls);
+
+        // Processar Backup (Se a função global existir no seu sistema)
+        if(typeof processarUploadComBackup === 'function') {
+            await processarUploadComBackup(req, res, 'jogos', novoJogoId);
+        }
+
+        req.flash('success', 'Jogo publicado com sucesso!');
+        res.redirect('/admin/jogos');
+
+    } catch (err) {
+        console.error(err);
+        // Tenta limpar arquivos upados em caso de erro (opcional, mas recomendado)
+        // if (req.files) { ... lógica de unlink ... }
+        
+        req.flash('error', 'Erro ao criar jogo: ' + err.message);
+        res.redirect('/admin/jogos/novo');
+    }
+});
+
+// D. FORMULÁRIO EDITAR
+app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
+    try {
+        const jogoResult = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
+        if(jogoResult.rows.length === 0) {
+            req.flash('error', 'Jogo não encontrado.');
+            return res.redirect('/admin/jogos');
+        }
+        
+        // Busca links existentes ordenados
+        const linksResult = await db.query('SELECT * FROM jogo_links WHERE jogo_id = $1 ORDER BY ordem ASC', [req.params.id]);
+
+        res.render('admin/jogo_form', {
+            jogo: jogoResult.rows[0],
+            links: linksResult.rows,
+            action: `/admin/jogos/${req.params.id}?_method=PUT`,
+            title: 'Editar Jogo'
+        });
+    } catch (err) {
+        console.error(err);
+        res.redirect('/admin/jogos');
+    }
+});
+
+// E. ATUALIZAR JOGO (PUT)
+app.put('/admin/jogos/:id', requireAdmin, gameUpload, async (req, res) => {
+    const { 
+        titulo, preco, plataforma, genero, trailer_url, 
+        descricao, requisitos, classificacao, ativo, 
+        links_labels, links_urls 
     } = req.body;
 
-    // Validação inicial
-    if (!req.files || !req.files.capa) {
-        req.flash('error', 'A imagem da capa é obrigatória.');
-        return res.redirect('/admin/jogos/novo');
+    try {
+        // Recupera dados atuais para manter imagens antigas caso não enviem novas
+        const atual = await db.query('SELECT capa, banner, screenshots FROM jogos WHERE id = $1', [req.params.id]);
+        if (atual.rows.length === 0) throw new Error('Jogo não encontrado.');
+
+        const rowAtual = atual.rows[0];
+
+        // Lógica de Imagens: Se enviou nova, usa a nova. Se não, mantém a antiga.
+        const capa = req.files['capa'] ? req.files['capa'][0].filename : rowAtual.capa;
+        const banner = req.files['banner'] ? req.files['banner'][0].filename : rowAtual.banner;
+        
+        // Lógica Screenshots: Se enviou novas, substitui todas. Se não, mantém as antigas.
+        // (Para um sistema mais complexo de adicionar/remover individualmente, precisaria de logica extra via AJAX)
+        const screenshots = (req.files['screenshots'] && req.files['screenshots'].length > 0) 
+            ? req.files['screenshots'].map(f => f.filename) 
+            : rowAtual.screenshots;
+
+        // Atualiza Jogo
+        await db.query(`
+            UPDATE jogos SET 
+            titulo=$1, capa=$2, banner=$3, screenshots=$4, preco=$5, 
+            plataforma=$6, genero=$7, trailer_url=$8, descricao=$9, 
+            requisitos=$10, classificacao=$11, ativo=$12, updated_at=CURRENT_TIMESTAMP
+            WHERE id=$13
+        `, [
+            titulo.trim(), capa, banner, screenshots, parseFloat(preco)||0, 
+            plataforma, genero, trailer_url, descricao, requisitos, 
+            classificacao, ativo === 'on', req.params.id
+        ]);
+
+        // Atualiza Links (Apaga antigos e cria novos)
+        await salvarLinksJogo(req.params.id, links_labels, links_urls);
+
+        // Backup
+        if(typeof processarUploadComBackup === 'function') {
+            await processarUploadComBackup(req, res, 'jogos', req.params.id);
+        }
+
+        req.flash('success', 'Dados do jogo atualizados com sucesso!');
+        res.redirect('/admin/jogos');
+
+    } catch (err) {
+        console.error(err);
+        req.flash('error', 'Erro ao atualizar: ' + err.message);
+        res.redirect(`/admin/jogos/${req.params.id}/editar`);
     }
-
-    const capa = req.files.capa[0].filename;
-    const banner = req.files.banner ? req.files.banner[0].filename : null;
-    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : [];
-
-    // 1. Inserir Jogo e pegar o ID
-    const queryInsert = `
-      INSERT INTO jogos 
-      (titulo, capa, banner, screenshots, preco, plataforma, genero, trailer_url, descricao, requisitos, desenvolvedor, classificacao, ativo)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING id
-    `;
-    
-    const values = [
-      titulo, capa, banner, screenshots, 
-      parseFloat(preco) || 0, plataforma, genero, trailer_url, 
-      descricao, requisitos, desenvolvedor, classificacao, 
-      ativo === 'on' || ativo === true
-    ];
-
-    const result = await db.query(queryInsert, values);
-    const jogoId = result.rows[0].id;
-
-    // 2. Salvar os Links vinculados ao novo ID
-    // Passamos o links_labels e links_urls que vem do req.body
-    await salvarLinksJogo(jogoId, links_labels, links_urls);
-
-    // 3. Backup (se houver a função)
-    if (typeof processarUploadComBackup === 'function') {
-        await processarUploadComBackup(req, res, 'jogos', jogoId);
-    }
-
-    req.flash('success', 'O jogo foi publicado com sucesso na Kuanda Games!');
-    res.redirect('/admin/jogos');
-
-  } catch (error) {
-    console.error("Erro ao criar jogo:", error);
-    req.flash('error', 'Erro interno ao salvar: ' + error.message);
-    res.redirect('/admin/jogos/novo');
-  }
 });
 
-// 4. FORMULÁRIO EDITAR JOGO
-app.get('/admin/jogos/:id/editar', requireAdmin, async (req, res) => {
-  try {
-    const jogo = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
-    if (jogo.rows.length === 0) return res.redirect('/admin/jogos');
-    
-    // BUSCAR LINKS EXISTENTES
-    const links = await db.query('SELECT * FROM jogo_links WHERE jogo_id = $1 ORDER BY id ASC', [req.params.id]);
-
-    res.render('admin/jogo_form', { 
-      jogo: jogo.rows[0],
-      links: links.rows, // Passa os links para o formulário
-      action: `/admin/jogos/${req.params.id}?_method=PUT`,
-      title: 'Editar Jogo - Admin'
-    });
-  } catch (e) { 
-    console.error('Erro ao carregar jogo para edição:', e);
-    res.redirect('/admin/jogos'); 
-  }
-});
-
-// 5. ATUALIZAR JOGO (PUT)
-app.put('/admin/jogos/:id', requireAdmin, gameUpload, async (req, res) => {
-  const { 
-    titulo, preco, plataforma, genero, link_download, trailer_url, 
-    descricao, requisitos, desenvolvedor, classificacao, ativo,
-    links_labels, links_urls 
-  } = req.body;
-  
-  try {
-    const jogoAtual = await db.query('SELECT capa, banner, screenshots FROM jogos WHERE id = $1', [req.params.id]);
-    const current = jogoAtual.rows[0];
-
-    const capa = req.files.capa ? req.files.capa[0].filename : current.capa;
-    const banner = req.files.banner ? req.files.banner[0].filename : current.banner;
-    const screenshots = req.files.screenshots ? req.files.screenshots.map(f => f.filename) : current.screenshots;
-
-    await db.query(`
-      UPDATE jogos SET 
-      titulo=$1, capa=$2, banner=$3, screenshots=$4, preco=$5, plataforma=$6, genero=$7, 
-      link_download=$8, trailer_url=$9, descricao=$10, requisitos=$11, desenvolvedor=$12, classificacao=$13, ativo=$14
-      WHERE id=$15
-    `, [
-      titulo, capa, banner, screenshots, 
-      parseFloat(preco) || 0, plataforma, genero, link_download, trailer_url, 
-      descricao, requisitos, desenvolvedor, classificacao, ativo === 'on', 
-      req.params.id
-    ]);
-
-    // ATUALIZAR LINKS EXTRAS
-    await salvarLinksJogo(req.params.id, links_labels, links_urls);
-
-    // BACKUP IMAGENS
-    await processarUploadComBackup(req, res, 'jogos', req.params.id);
-
-    req.flash('success', 'Jogo atualizado!');
-    res.redirect('/admin/jogos');
-  } catch (error) {
-    console.error(error);
-    req.flash('error', 'Erro ao atualizar');
-    res.redirect('/admin/jogos');
-  }
-});
-
-// 6. DELETAR JOGO
+// F. EXCLUIR JOGO (DELETE)
 app.delete('/admin/jogos/:id', requireAdmin, async (req, res) => {
-  try {
-    // Links são deletados automaticamente pelo CASCADE do banco, mas por segurança:
-    await db.query('DELETE FROM jogo_links WHERE jogo_id = $1', [req.params.id]);
-    await db.query('DELETE FROM jogos WHERE id = $1', [req.params.id]);
-    
-    req.flash('success', 'Jogo removido');
-    res.redirect('/admin/jogos');
-  } catch (error) {
-    req.flash('error', 'Erro ao remover jogo');
-    res.redirect('/admin/jogos');
-  }
+    try {
+        // O banco deve ter ON DELETE CASCADE configurado nas chaves estrangeiras (links/pedidos),
+        // mas deletamos os links manualmente por garantia e clareza.
+        await db.query('DELETE FROM jogo_links WHERE jogo_id = $1', [req.params.id]);
+        
+        // Deletar o jogo (Imagens permanecem na pasta ou cria-se uma função para limpar fs.unlink)
+        await db.query('DELETE FROM jogos WHERE id = $1', [req.params.id]);
+        
+        req.flash('success', 'Jogo removido permanentemente.');
+        res.redirect('/admin/jogos');
+    } catch (error) {
+        console.error(error);
+        req.flash('error', 'Erro ao remover o jogo.');
+        res.redirect('/admin/jogos');
+    }
+});
+
+// =======================================================
+// 4. ROTAS PÚBLICAS: VISUALIZAÇÃO E COMPRA
+// =======================================================
+
+// A. TELA DE DETALHES DO JOGO
+app.get('/game/:id', async (req, res) => {
+    try {
+        // Buscar jogo e verificar se está ativo (ou se é admin vendo preview)
+        const jogoResult = await db.query('SELECT * FROM jogos WHERE id = $1', [req.params.id]);
+        
+        if (jogoResult.rows.length === 0) return res.redirect('/games');
+        const jogo = jogoResult.rows[0];
+
+        // Se não for ativo e não for admin, esconde
+        // if (!jogo.ativo && (!req.session.user || !req.session.user.isAdmin)) return res.redirect('/games');
+
+        // Buscar Links
+        const linksResult = await db.query('SELECT * FROM jogo_links WHERE jogo_id = $1 ORDER BY ordem', [jogo.id]);
+
+        // VARIÁVEIS DE CONTROLE DE ACESSO
+        let temAcesso = false;
+        let pedidoPendente = false;
+
+        // 1. Jogo Grátis
+        if (parseFloat(jogo.preco) <= 0) {
+            temAcesso = true;
+        } 
+        // 2. Usuário Logado verifica compra
+        else if (req.session.user) {
+            const pedido = await db.query(
+                'SELECT status FROM pedidos_acesso WHERE usuario_id = $1 AND jogo_id = $2',
+                [req.session.user.id, jogo.id]
+            );
+            
+            if (pedido.rows.length > 0) {
+                if (pedido.rows[0].status === 'aprovado') temAcesso = true;
+                if (pedido.rows[0].status === 'pendente') pedidoPendente = true;
+            }
+        }
+
+        res.render('game_detalhes', {
+            title: `${jogo.titulo} - Kuanda Games`,
+            jogo: jogo,
+            links: linksResult.rows,
+            temAcesso: temAcesso,
+            pedidoPendente: pedidoPendente,
+            user: req.session.user || null
+        });
+
+    } catch (error) {
+        console.error('Erro na rota pública do jogo:', error);
+        res.redirect('/games');
+    }
+});
+
+// B. SOLICITAR COMPRA (POST)
+app.post('/game/:id/comprar', requireAuth, async (req, res) => {
+    try {
+        // Verifica se jogo existe e tem preço
+        const jogoCheck = await db.query('SELECT preco FROM jogos WHERE id = $1', [req.params.id]);
+        if (jogoCheck.rows.length === 0) return res.redirect('/games');
+        
+        // Se for grátis, não cria pedido, apenas redireciona (ou libera direto na lógica do GET)
+        if (parseFloat(jogoCheck.rows[0].preco) <= 0) {
+            return res.redirect(`/game/${req.params.id}`);
+        }
+
+        // Verifica duplicidade de pedido
+        const existe = await db.query(
+            'SELECT id FROM pedidos_acesso WHERE usuario_id=$1 AND jogo_id=$2', 
+            [req.session.user.id, req.params.id]
+        );
+        
+        if(existe.rows.length === 0) {
+            await db.query(
+                'INSERT INTO pedidos_acesso (usuario_id, jogo_id, status) VALUES ($1, $2, $3)', 
+                [req.session.user.id, req.params.id, 'pendente']
+            );
+            req.flash('success', 'Pedido de compra realizado! Aguarde a aprovação do pagamento.');
+        } else {
+            req.flash('info', 'Você já possui um pedido em andamento para este jogo.');
+        }
+        
+        res.redirect(`/game/${req.params.id}`);
+
+    } catch(err) {
+        console.error(err);
+        req.flash('error', 'Erro ao processar o pedido.');
+        res.redirect(`/game/${req.params.id}`);
+    }
+});
+
+// =======================================================
+// ROTAS ADMIN: GESTÃO DE PEDIDOS DE JOGOS
+// =======================================================
+
+// 1. TELA DE LISTAGEM DE PEDIDOS
+app.get('/admin/pedidos-jogos', requireAdmin, async (req, res) => {
+    try {
+        // Busca pedidos pendentes especificamente de JOGOS (onde jogo_id não é nulo)
+        const pedidos = await db.query(`
+            SELECT 
+                p.id, 
+                p.created_at, 
+                p.status,
+                u.nome as usuario_nome, 
+                u.email, 
+                u.telefone, 
+                j.titulo as jogo_titulo, 
+                j.preco,
+                j.capa
+            FROM pedidos_acesso p
+            JOIN usuarios u ON p.usuario_id = u.id
+            JOIN jogos j ON p.jogo_id = j.id
+            WHERE p.status = 'pendente' AND p.jogo_id IS NOT NULL
+            ORDER BY p.created_at DESC
+        `);
+
+        res.render('admin/pedidos_jogos', { 
+            pedidos: pedidos.rows,
+            title: 'Pedidos de Jogos - Admin' 
+        });
+    } catch (error) {
+        console.error('Erro ao listar pedidos de jogos:', error);
+        req.flash('error', 'Erro ao carregar pedidos.');
+        res.redirect('/admin');
+    }
+});
+
+// 2. APROVAR PEDIDO (Libera o download)
+app.post('/admin/pedidos-jogos/:id/aprovar', requireAdmin, async (req, res) => {
+    try {
+        await db.query(
+            "UPDATE pedidos_acesso SET status = 'aprovado', updated_at = CURRENT_TIMESTAMP WHERE id = $1", 
+            [req.params.id]
+        );
+        req.flash('success', 'Acesso ao jogo liberado com sucesso!');
+        res.redirect('/admin/pedidos-jogos');
+    } catch (error) {
+        console.error('Erro ao aprovar:', error);
+        req.flash('error', 'Erro ao aprovar pedido.');
+        res.redirect('/admin/pedidos-jogos');
+    }
+});
+
+// 3. REJEITAR PEDIDO (Remove a solicitação)
+app.post('/admin/pedidos-jogos/:id/rejeitar', requireAdmin, async (req, res) => {
+    try {
+        await db.query("DELETE FROM pedidos_acesso WHERE id = $1", [req.params.id]);
+        req.flash('success', 'Pedido rejeitado e removido.');
+        res.redirect('/admin/pedidos-jogos');
+    } catch (error) {
+        console.error('Erro ao rejeitar:', error);
+        req.flash('error', 'Erro ao rejeitar pedido.');
+        res.redirect('/admin/pedidos-jogos');
+    }
 });
 
 // =======================================================
@@ -3919,6 +4365,159 @@ app.get('/games', async (req, res) => {
     // Redireciona para home em caso de erro para não travar o site
     res.redirect('/');
   }
+});
+
+// =======================================================
+// ROTAS DE PLANOS (CORRIGIDAS E ROBUSTAS)
+// =======================================================
+
+// 1. TELA DE PLANOS (COM CARREGAMENTO DE VITRINE)
+app.get('/planos', async (req, res) => {
+    try {
+        // A. Buscar Planos de Vendedor (Se não tiver no banco, cria array manual para não quebrar)
+        let planosVendedor = [];
+        try {
+            const result = await db.query('SELECT * FROM planos_vendedor ORDER BY preco_mensal ASC');
+            planosVendedor = result.rows;
+        } catch (e) { console.log('Tabela planos_vendedor vazia ou inexistente'); }
+
+        // B. Buscar Vitrine (Jogos e Filmes Recentes) para o Banner
+        let showcase = [];
+        try {
+            // Tenta buscar jogos
+            const jogos = await db.query('SELECT titulo, capa FROM jogos WHERE ativo = true ORDER BY created_at DESC LIMIT 6');
+            jogos.rows.forEach(j => showcase.push({ 
+                tipo: 'JOGO', 
+                titulo: j.titulo, 
+                img: `/uploads/games/${j.capa}` 
+            }));
+
+            // Tenta buscar filmes
+            const filmes = await db.query('SELECT titulo, poster FROM filmes WHERE ativo = true ORDER BY created_at DESC LIMIT 6');
+            filmes.rows.forEach(f => showcase.push({ 
+                tipo: 'FILME', 
+                titulo: f.titulo, 
+                img: `/uploads/filmes/${f.poster}` 
+            }));
+        } catch (e) { console.log('Erro ao buscar vitrine', e); }
+
+        // C. Fallback (Se não tiver nada, preenche com placeholders para o design não quebrar)
+        if (showcase.length === 0) {
+            showcase = [
+                { tipo: 'PREMIUM', titulo: 'GTA VI', img: 'https://via.placeholder.com/300x450/4f46e5/ffffff?text=GTA+VI' },
+                { tipo: 'CINE', titulo: 'Dune 2', img: 'https://via.placeholder.com/300x450/E31C25/ffffff?text=Cinema' },
+                { tipo: 'JOGO', titulo: 'FIFA 25', img: 'https://via.placeholder.com/300x450/10b981/ffffff?text=FIFA' },
+                { tipo: 'CINE', titulo: 'Marvel', img: 'https://via.placeholder.com/300x450/000000/ffffff?text=Marvel' }
+            ];
+        }
+
+        res.render('planos', {
+            title: 'Escolha seu Plano - KuandaShop',
+            planosVendedor: planosVendedor,
+            showcase: showcase,
+            user: req.session.user || null,
+            carrinho: req.session.carrinho || []
+        });
+
+    } catch (error) {
+        console.error('Erro crítico na rota de planos:', error);
+        res.redirect('/');
+    }
+});
+
+// 2. PROCESSAR ADESÃO (LÓGICA FINANCEIRA + WHATSAPP)
+app.post('/planos/aderir', requireAuth, async (req, res) => {
+    const { tipo_plano, nome_plano, valor } = req.body;
+    
+    try {
+        const userId = req.session.user.id;
+
+        // 1. Verificar se já tem pedido pendente para evitar duplicação
+        const pendente = await db.query(
+            "SELECT id FROM assinaturas WHERE usuario_id = $1 AND status = 'pendente'", 
+            [userId]
+        );
+
+        if (pendente.rows.length > 0) {
+            req.flash('info', 'Você já possui uma solicitação em análise. Verifique seu perfil.');
+            return res.redirect('/planos');
+        }
+
+        // 2. Registrar no Banco de Dados
+        await db.query(`
+            INSERT INTO assinaturas (usuario_id, tipo, valor, status, created_at)
+            VALUES ($1, $2, $3, 'pendente', CURRENT_TIMESTAMP)
+        `, [userId, tipo_plano, valor]);
+
+        // 3. Gerar Link do WhatsApp
+        const texto = `Olá Kuanda! 👋%0AQuero assinar o plano: *${nome_plano}*.%0AValor: ${valor} Kz.%0AMEU ID: ${userId}%0A%0AComo faço o pagamento?`;
+        const linkZap = `https://wa.me/244923456789?text=${texto}`;
+
+        // 4. Redirecionar
+        res.redirect(linkZap);
+
+    } catch (error) {
+        console.error('Erro ao aderir plano:', error);
+        req.flash('error', 'Erro ao processar sua solicitação. Tente novamente.');
+        res.redirect('/planos');
+    }
+});
+
+// 3. ADMIN: GERENCIAR ASSINATURAS (NOVA ROTA)
+app.get('/admin/assinaturas', requireAdmin, async (req, res) => {
+    try {
+        const assinaturas = await db.query(`
+            SELECT a.*, u.nome, u.email, u.telefone 
+            FROM assinaturas a
+            JOIN usuarios u ON a.usuario_id = u.id
+            ORDER BY a.created_at DESC
+        `);
+        
+        res.render('admin/assinaturas', { assinaturas: assinaturas.rows });
+    } catch (error) {
+        console.error(error);
+        res.redirect('/admin');
+    }
+});
+
+// 4. ADMIN: APROVAR ASSINATURA
+app.post('/admin/assinaturas/:id/aprovar', requireAdmin, async (req, res) => {
+    try {
+        const ass = await db.query('SELECT * FROM assinaturas WHERE id = $1', [req.params.id]);
+        if(ass.rows.length === 0) return res.redirect('/admin/assinaturas');
+        
+        const assinatura = ass.rows[0];
+        const dias = 30; // Duração padrão
+        const dataFim = new Date();
+        dataFim.setDate(dataFim.getDate() + dias);
+
+        // Atualizar tabela de assinaturas
+        await db.query(`
+            UPDATE assinaturas 
+            SET status = 'aprovado', data_inicio = CURRENT_TIMESTAMP, data_fim = $1
+            WHERE id = $2
+        `, [dataFim, req.params.id]);
+
+        // Atualizar permissões do usuário
+        if (assinatura.tipo.includes('vendedor')) {
+            // Lógica para mudar plano do vendedor (já existente)
+            // Ex: buscar ID do plano baseado no nome e atualizar usuarios.plano_id
+        } else if (assinatura.tipo === 'gamer_premium') {
+            await db.query('UPDATE usuarios SET premium_games_ate = $1 WHERE id = $2', [dataFim, assinatura.usuario_id]);
+        } else if (assinatura.tipo === 'cine_premium') {
+            await db.query('UPDATE usuarios SET premium_cine_ate = $1 WHERE id = $2', [dataFim, assinatura.usuario_id]);
+        } else if (assinatura.tipo === 'kuanda_pass') {
+            // Libera tudo
+            await db.query('UPDATE usuarios SET premium_games_ate = $1, premium_cine_ate = $1 WHERE id = $2', [dataFim, assinatura.usuario_id]);
+        }
+
+        req.flash('success', 'Assinatura ativada com sucesso!');
+        res.redirect('/admin/assinaturas');
+
+    } catch (error) {
+        console.error(error);
+        res.redirect('/admin/assinaturas');
+    }
 });
 
 // ==================== PAINEL ADMINISTRATIVO ====================
@@ -4965,206 +5564,443 @@ app.post('/admin/banners/:id/toggle-status', requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== GERENCIAMENTO DE FILMES ====================
+// =======================================================
+// CONFIGURAÇÃO DO UPLOAD (Multer)
+// =======================================================
+const uploadFilmes = upload.fields([
+    { name: 'poster', maxCount: 1 },
+    { name: 'banner', maxCount: 1 }
+]);
+
+// =======================================================
+// ROTAS ADMIN: GERENCIAMENTO DE FILMES
+// =======================================================
+
+// 1. LISTAR FILMES
 app.get('/admin/filmes', requireAdmin, async (req, res) => {
-  try {
-    const filmes = await db.query(`
-      SELECT * FROM filmes 
-      ORDER BY data_lancamento DESC, created_at DESC
-    `);
-    
-    res.render('admin/filmes', {
-      filmes: filmes.rows,
-      title: 'Gerenciar Filmes - KuandaShop'
-    });
-  } catch (error) {
-    console.error('Erro ao carregar filmes:', error);
-    req.flash('error', 'Erro ao carregar filmes');
-    res.render('admin/filmes', {
-      filmes: [],
-      title: 'Gerenciar Filmes'
-    });
-  }
+    try {
+        const filmes = await db.query(`
+            SELECT * FROM filmes 
+            ORDER BY data_lancamento DESC, created_at DESC
+        `);
+        
+        res.render('admin/filmes', {
+            filmes: filmes.rows,
+            title: 'Gerenciar Filmes - KuandaShop'
+        });
+    } catch (error) {
+        console.error('Erro ao carregar filmes:', error);
+        req.flash('error', 'Erro ao carregar filmes');
+        res.render('admin/filmes', { filmes: [], title: 'Gerenciar Filmes' });
+    }
 });
 
+// 2. FORMULÁRIO NOVO
 app.get('/admin/filmes/novo', requireAdmin, (req, res) => {
-  res.render('admin/filme-form', {
-    filme: null,
-    action: '/admin/filmes',
-    title: 'Novo Filme - KuandaShop'
-  });
-});
-
-app.post('/admin/filmes', requireAdmin, upload.single('poster'), async (req, res) => {
-  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
-  
-  try {
-    if (!req.file) {
-      req.flash('error', 'É necessário enviar um poster para o filme');
-      return res.redirect('/admin/filmes/novo');
-    }
-
-    const result = await db.query(`
-      INSERT INTO filmes (titulo, poster, trailer_url, sinopse, data_lancamento, classificacao, ativo)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id
-    `, [
-      titulo.trim(),
-      req.file.filename,
-      trailer_url ? trailer_url.trim() : null,
-      sinopse ? sinopse.trim() : null,
-      data_lancamento,
-      classificacao ? classificacao.trim() : null,
-      ativo === 'on'
-    ]);
-
-    const filmeId = result.rows[0].id;
-
-    // SALVAR BACKUP BYTEA DO POSTER DO FILME
-    const filePath = path.join('public/uploads/filmes/', req.file.filename);
-    await salvarBackupImagem(filePath, req.file.filename, 'filmes', filmeId);
-    
-    req.flash('success', 'Filme adicionado com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao criar filme:', error);
-    
-    if (req.file) {
-      const filePath = path.join('public/uploads/filmes/', req.file.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    req.flash('error', 'Erro ao criar filme');
-    res.redirect('/admin/filmes/novo');
-  }
-});
-
-app.get('/admin/filmes/:id/editar', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
-    }
-    
     res.render('admin/filme-form', {
-      filme: filme.rows[0],
-      action: `/admin/filmes/${req.params.id}?_method=PUT`,
-      title: 'Editar Filme - KuandaShop'
+        filme: null,
+        links: [], // Passa array vazio para não quebrar o loop no EJS
+        action: '/admin/filmes',
+        title: 'Novo Filme - KuandaShop'
     });
-  } catch (error) {
-    console.error('Erro ao carregar filme:', error);
-    req.flash('error', 'Erro ao carregar filme');
-    res.redirect('/admin/filmes');
-  }
 });
 
-app.put('/admin/filmes/:id', requireAdmin, upload.single('poster'), async (req, res) => {
-  const { titulo, trailer_url, sinopse, data_lancamento, classificacao, ativo } = req.body;
-  
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
-    }
-    
-    let poster = filme.rows[0].poster;
-    
-    if (req.file) {
-      if (filme.rows[0].poster) {
-        const oldPath = path.join('public/uploads/filmes/', filme.rows[0].poster);
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
+// 3. SALVAR (POST)
+app.post('/admin/filmes', requireAdmin, uploadFilmes, async (req, res) => {
+    // Extrai campos do corpo
+    const { titulo, sinopse, trailer_url, data_lancamento, classificacao, ativo, preco, tipo, labels, urls } = req.body;
+
+    try {
+        // Validação do Pôster (Obrigatório)
+        if (!req.files || !req.files['poster']) {
+            req.flash('error', 'É necessário enviar um pôster para o filme.');
+            return res.redirect('/admin/filmes/novo');
         }
-      }
-      poster = req.file.filename;
-      
-      // SALVAR BACKUP BYTEA DO NOVO POSTER
-      const newPath = path.join('public/uploads/filmes/', req.file.filename);
-      await salvarBackupImagem(newPath, req.file.filename, 'filmes', req.params.id);
+
+        const posterFilename = req.files['poster'][0].filename;
+        const bannerFilename = req.files['banner'] ? req.files['banner'][0].filename : null;
+
+        // Inserir Filme
+        const result = await db.query(`
+            INSERT INTO filmes (titulo, poster, banner, sinopse, trailer_url, data_lancamento, classificacao, ativo, preco, tipo)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
+        `, [
+            titulo.trim(),
+            posterFilename,
+            bannerFilename,
+            sinopse ? sinopse.trim() : null,
+            trailer_url ? trailer_url.trim() : null,
+            data_lancamento,
+            classificacao ? classificacao.trim() : null,
+            ativo === 'on',
+            parseFloat(preco) || 0,
+            tipo
+        ]);
+
+        const filmeId = result.rows[0].id;
+
+        // Inserir Links (Se houver)
+        if (labels && urls) {
+            const labelsArray = Array.isArray(labels) ? labels : [labels];
+            const urlsArray = Array.isArray(urls) ? urls : [urls];
+
+            for (let i = 0; i < urlsArray.length; i++) {
+                if (urlsArray[i].trim() !== '') {
+                    await db.query(
+                        'INSERT INTO filme_links (filme_id, label, url, ordem) VALUES ($1, $2, $3, $4)',
+                        [filmeId, labelsArray[i], urlsArray[i], i]
+                    );
+                }
+            }
+        }
+
+        // BACKUP DE IMAGENS (Poster e Banner)
+        const posterPath = path.join('public/uploads/filmes/', posterFilename);
+        await salvarBackupImagem(posterPath, posterFilename, 'filmes', filmeId);
+
+        if (bannerFilename) {
+            const bannerPath = path.join('public/uploads/filmes/', bannerFilename);
+            await salvarBackupImagem(bannerPath, bannerFilename, 'filmes', filmeId);
+        }
+
+        req.flash('success', 'Filme adicionado com sucesso!');
+        res.redirect('/admin/filmes');
+
+    } catch (error) {
+        console.error('Erro ao criar filme:', error);
+        
+        // Limpeza de arquivos enviados em caso de erro no banco
+        if (req.files) {
+            if (req.files['poster']) fs.unlinkSync(path.join('public/uploads/filmes/', req.files['poster'][0].filename));
+            if (req.files['banner']) fs.unlinkSync(path.join('public/uploads/filmes/', req.files['banner'][0].filename));
+        }
+
+        req.flash('error', 'Erro ao criar filme: ' + error.message);
+        res.redirect('/admin/filmes/novo');
     }
-    
-    await db.query(`
-      UPDATE filmes 
-      SET titulo = $1, poster = $2, trailer_url = $3, sinopse = $4, 
-          data_lancamento = $5, classificacao = $6, ativo = $7, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $8
-    `, [
-      titulo.trim(),
-      poster,
-      trailer_url ? trailer_url.trim() : null,
-      sinopse ? sinopse.trim() : null,
-      data_lancamento,
-      classificacao ? classificacao.trim() : null,
-      ativo === 'on',
-      req.params.id
-    ]);
-    
-    req.flash('success', 'Filme atualizado com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao atualizar filme:', error);
-    req.flash('error', 'Erro ao atualizar filme');
-    res.redirect(`/admin/filmes/${req.params.id}/editar`);
-  }
 });
 
+// 4. FORMULÁRIO EDITAR
+app.get('/admin/filmes/:id/editar', requireAdmin, async (req, res) => {
+    try {
+        const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
+        
+        if (filme.rows.length === 0) {
+            req.flash('error', 'Filme não encontrado');
+            return res.redirect('/admin/filmes');
+        }
+
+        // Buscar links existentes
+        const links = await db.query('SELECT * FROM filme_links WHERE filme_id = $1 ORDER BY ordem', [req.params.id]);
+        
+        res.render('admin/filme-form', {
+            filme: filme.rows[0],
+            links: links.rows,
+            action: `/admin/filmes/${req.params.id}?_method=PUT`,
+            title: 'Editar Filme - KuandaShop'
+        });
+    } catch (error) {
+        console.error('Erro ao carregar filme:', error);
+        req.flash('error', 'Erro ao carregar dados do filme');
+        res.redirect('/admin/filmes');
+    }
+});
+
+// 5. ATUALIZAR (PUT)
+app.put('/admin/filmes/:id', requireAdmin, uploadFilmes, async (req, res) => {
+    const { titulo, sinopse, trailer_url, data_lancamento, classificacao, ativo, preco, tipo, labels, urls } = req.body;
+
+    try {
+        // Buscar dados atuais para manter imagens antigas se não houver novas
+        const filmeAtual = await db.query('SELECT poster, banner FROM filmes WHERE id = $1', [req.params.id]);
+        if (filmeAtual.rows.length === 0) {
+            req.flash('error', 'Filme não encontrado');
+            return res.redirect('/admin/filmes');
+        }
+
+        let poster = filmeAtual.rows[0].poster;
+        let banner = filmeAtual.rows[0].banner;
+
+        // Processar POSTER (se enviado novo)
+        if (req.files['poster']) {
+            if (poster) {
+                const oldPath = path.join('public/uploads/filmes/', poster);
+                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            }
+            poster = req.files['poster'][0].filename;
+            // Backup do novo
+            await salvarBackupImagem(req.files['poster'][0].path, poster, 'filmes', req.params.id);
+        }
+
+        // Processar BANNER (se enviado novo)
+        if (req.files['banner']) {
+            if (banner) {
+                const oldPath = path.join('public/uploads/filmes/', banner);
+                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            }
+            banner = req.files['banner'][0].filename;
+            // Backup do novo
+            await salvarBackupImagem(req.files['banner'][0].path, banner, 'filmes', req.params.id);
+        }
+
+        // Atualizar Tabela Filmes
+        await db.query(`
+            UPDATE filmes SET 
+            titulo=$1, poster=$2, banner=$3, sinopse=$4, trailer_url=$5, 
+            data_lancamento=$6, classificacao=$7, ativo=$8, preco=$9, tipo=$10, updated_at=CURRENT_TIMESTAMP
+            WHERE id=$11
+        `, [
+            titulo.trim(), poster, banner, sinopse ? sinopse.trim() : null, trailer_url ? trailer_url.trim() : null, 
+            data_lancamento, classificacao ? classificacao.trim() : null, ativo === 'on', 
+            parseFloat(preco) || 0, tipo, req.params.id
+        ]);
+
+        // Atualizar Links (Remove todos antigos e recria)
+        await db.query('DELETE FROM filme_links WHERE filme_id = $1', [req.params.id]);
+        
+        if (labels && urls) {
+            const labelsArray = Array.isArray(labels) ? labels : [labels];
+            const urlsArray = Array.isArray(urls) ? urls : [urls];
+
+            for (let i = 0; i < urlsArray.length; i++) {
+                if (urlsArray[i].trim() !== '') {
+                    await db.query(
+                        'INSERT INTO filme_links (filme_id, label, url, ordem) VALUES ($1, $2, $3, $4)',
+                        [req.params.id, labelsArray[i], urlsArray[i], i]
+                    );
+                }
+            }
+        }
+
+        req.flash('success', 'Filme atualizado com sucesso!');
+        res.redirect('/admin/filmes');
+
+    } catch (error) {
+        console.error('Erro ao atualizar filme:', error);
+        req.flash('error', 'Erro ao atualizar filme');
+        res.redirect(`/admin/filmes/${req.params.id}/editar`);
+    }
+});
+
+// 6. EXCLUIR (DELETE)
 app.delete('/admin/filmes/:id', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      req.flash('error', 'Filme não encontrado');
-      return res.redirect('/admin/filmes');
+    try {
+        const filme = await db.query('SELECT * FROM filmes WHERE id = $1', [req.params.id]);
+        
+        if (filme.rows.length === 0) {
+            req.flash('error', 'Filme não encontrado');
+            return res.redirect('/admin/filmes');
+        }
+        
+        // Deletar arquivos físicos
+        if (filme.rows[0].poster) {
+            const posterPath = path.join('public/uploads/filmes/', filme.rows[0].poster);
+            if (fs.existsSync(posterPath)) fs.unlinkSync(posterPath);
+        }
+        if (filme.rows[0].banner) {
+            const bannerPath = path.join('public/uploads/filmes/', filme.rows[0].banner);
+            if (fs.existsSync(bannerPath)) fs.unlinkSync(bannerPath);
+        }
+        
+        // Deletar do banco (Links são deletados em cascata se configurado, ou deletamos manual)
+        await db.query('DELETE FROM filme_links WHERE filme_id = $1', [req.params.id]);
+        await db.query('DELETE FROM filmes WHERE id = $1', [req.params.id]);
+        
+        req.flash('success', 'Filme excluído com sucesso!');
+        res.redirect('/admin/filmes');
+    } catch (error) {
+        console.error('Erro ao excluir filme:', error);
+        req.flash('error', 'Erro ao excluir filme');
+        res.redirect('/admin/filmes');
     }
-    
-    if (filme.rows[0].poster) {
-      const filePath = path.join('public/uploads/filmes/', filme.rows[0].poster);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    await db.query('DELETE FROM filmes WHERE id = $1', [req.params.id]);
-    
-    req.flash('success', 'Filme excluído com sucesso!');
-    res.redirect('/admin/filmes');
-  } catch (error) {
-    console.error('Erro ao excluir filme:', error);
-    req.flash('error', 'Erro ao excluir filme');
-    res.redirect('/admin/filmes');
-  }
 });
 
+// 7. TOGGLE STATUS (AJAX)
 app.post('/admin/filmes/:id/toggle-status', requireAdmin, async (req, res) => {
-  try {
-    const filme = await db.query('SELECT ativo FROM filmes WHERE id = $1', [req.params.id]);
-    
-    if (filme.rows.length === 0) {
-      return res.json({ success: false, message: 'Filme não encontrado' });
+    try {
+        const filme = await db.query('SELECT ativo FROM filmes WHERE id = $1', [req.params.id]);
+        
+        if (filme.rows.length === 0) {
+            return res.json({ success: false, message: 'Filme não encontrado' });
+        }
+        
+        const novoStatus = !filme.rows[0].ativo;
+        
+        await db.query(
+            'UPDATE filmes SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+            [novoStatus, req.params.id]
+        );
+        
+        res.json({ 
+            success: true, 
+            message: `Filme ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
+            novoStatus 
+        });
+    } catch (error) {
+        console.error('Erro ao alterar status:', error);
+        res.json({ success: false, message: 'Erro ao alterar status' });
     }
-    
-    const novoStatus = !filme.rows[0].ativo;
-    
-    await db.query(
-      'UPDATE filmes SET ativo = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [novoStatus, req.params.id]
-    );
-    
-    res.json({ 
-      success: true, 
-      message: `Filme ${novoStatus ? 'ativado' : 'desativado'} com sucesso!`,
-      novoStatus 
-    });
-  } catch (error) {
-    console.error('Erro ao alterar status:', error);
-    res.json({ success: false, message: 'Erro ao alterar status' });
-  }
+});
+
+// =======================================================
+// ROTAS PÚBLICAS: CINEMA / VISUALIZAÇÃO
+// =======================================================
+
+// 1. DETALHES DO FILME
+app.get('/filme/:id', async (req, res) => {
+    try {
+        // Buscar filme ativo
+        const filmeResult = await db.query('SELECT * FROM filmes WHERE id = $1 AND ativo = true', [req.params.id]);
+        if (filmeResult.rows.length === 0) return res.redirect('/');
+        const filme = filmeResult.rows[0];
+
+        // Buscar Links
+        const linksResult = await db.query('SELECT * FROM filme_links WHERE filme_id = $1 ORDER BY ordem', [req.params.id]);
+        
+        // Verificar Acesso
+        let temAcesso = false;
+        let pedidoPendente = false;
+
+        if (parseFloat(filme.preco) <= 0) {
+            temAcesso = true; // Gratuito
+        } else if (req.session.user) {
+            // Verificar compra aprovada
+            const pedido = await db.query(
+                'SELECT status FROM pedidos_acesso WHERE usuario_id = $1 AND filme_id = $2',
+                [req.session.user.id, filme.id]
+            );
+            
+            if (pedido.rows.length > 0) {
+                if (pedido.rows[0].status === 'aprovado') temAcesso = true;
+                if (pedido.rows[0].status === 'pendente') pedidoPendente = true;
+            }
+        }
+
+        res.render('cinema/detalhe', {
+            title: `${filme.titulo} - Kuanda Cinema`,
+            filme: filme,
+            links: linksResult.rows,
+            temAcesso: temAcesso,
+            pedidoPendente: pedidoPendente,
+            user: req.session.user || null
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.redirect('/');
+    }
+});
+
+// 2. SOLICITAR COMPRA
+app.post('/filme/:id/comprar', requireAuth, async (req, res) => {
+    try {
+        const existe = await db.query(
+            'SELECT id FROM pedidos_acesso WHERE usuario_id = $1 AND filme_id = $2',
+            [req.session.user.id, req.params.id]
+        );
+
+        if (existe.rows.length > 0) {
+            req.flash('info', 'Você já tem um pedido para este título.');
+        } else {
+            await db.query(
+                'INSERT INTO pedidos_acesso (usuario_id, filme_id, status) VALUES ($1, $2, $3)',
+                [req.session.user.id, req.params.id, 'pendente']
+            );
+            req.flash('success', 'Pedido enviado! Aguarde aprovação após o pagamento.');
+        }
+        res.redirect(`/filme/${req.params.id}`);
+    } catch (error) {
+        console.error(error);
+        req.flash('error', 'Erro ao processar pedido.');
+        res.redirect(`/filme/${req.params.id}`);
+    }
+});
+
+// =======================================================
+// ROTAS ADMIN: FINANCEIRO (PEDIDOS CINEMA)
+// =======================================================
+
+app.get('/admin/pedidos-cinema', requireAdmin, async (req, res) => {
+    try {
+        const pedidos = await db.query(`
+            SELECT p.*, u.nome as usuario_nome, u.email, f.titulo as filme_titulo, f.preco 
+            FROM pedidos_acesso p
+            JOIN usuarios u ON p.usuario_id = u.id
+            JOIN filmes f ON p.filme_id = f.id
+            WHERE p.status = 'pendente'
+            ORDER BY p.created_at DESC
+        `);
+        res.render('admin/pedidos_cinema', { 
+            pedidos: pedidos.rows,
+            title: 'Pedidos de Acesso - Cinema' 
+        });
+    } catch (error) {
+        console.error(error);
+        res.redirect('/admin');
+    }
+});
+
+app.post('/admin/pedidos-cinema/:id/aprovar', requireAdmin, async (req, res) => {
+    try {
+        await db.query("UPDATE pedidos_acesso SET status = 'aprovado' WHERE id = $1", [req.params.id]);
+        req.flash('success', 'Acesso liberado com sucesso!');
+        res.redirect('/admin/pedidos-cinema');
+    } catch (error) {
+        console.error(error);
+        req.flash('error', 'Erro ao aprovar acesso.');
+        res.redirect('/admin/pedidos-cinema');
+    }
+});
+
+app.post('/admin/pedidos-cinema/:id/rejeitar', requireAdmin, async (req, res) => {
+    try {
+        // Opção A: Apenas deletar o pedido para limpar a lista
+        await db.query("DELETE FROM pedidos_acesso WHERE id = $1", [req.params.id]);
+        
+        // Opção B (Alternativa): Se quiser manter histórico, mude o status para 'rejeitado'
+        // await db.query("UPDATE pedidos_acesso SET status = 'rejeitado' WHERE id = $1", [req.params.id]);
+
+        req.flash('success', 'Pedido removido/cancelado com sucesso.');
+        res.redirect('/admin/pedidos-cinema');
+    } catch (error) {
+        console.error('Erro ao rejeitar pedido:', error);
+        req.flash('error', 'Erro ao cancelar o pedido.');
+        res.redirect('/admin/pedidos-cinema');
+    }
+});
+
+// =======================================================
+// ROTA DO CATÁLOGO DE CINEMA (LISTAGEM COMPLETA)
+// =======================================================
+app.get('/filmes', async (req, res) => {
+    try {
+        // Busca filmes ativos, ordenados pelos mais recentes primeiro
+        const result = await db.query(`
+            SELECT * FROM filmes 
+            WHERE ativo = true 
+            ORDER BY data_lancamento DESC, created_at DESC
+        `);
+
+        // Busca o filme mais recente que tenha banner para ser o destaque (Hero)
+        const destaqueResult = await db.query(`
+            SELECT * FROM filmes 
+            WHERE ativo = true AND banner IS NOT NULL 
+            ORDER BY created_at DESC LIMIT 1
+        `);
+
+        res.render('cinema', {
+            title: 'Catálogo de Filmes & Séries - Kuanda Cinema',
+            filmes: result.rows,
+            destaque: destaqueResult.rows[0] || null, // Passa o destaque ou null
+            user: req.session.user || null,
+            carrinho: req.session.carrinho || []
+        });
+
+    } catch (error) {
+        console.error('Erro ao carregar catálogo de filmes:', error);
+        res.redirect('/');
+    }
 });
 
 // ==================== CONFIGURAÇÕES DO SITE ====================
