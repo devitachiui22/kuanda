@@ -997,54 +997,114 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<!-- KUANDA NOTIFICATION WIDGET (CORRIGIDO PARA BIP ÚNICO) -->
 <style>
-    .k-fab { position: fixed; bottom: 30px; left: 30px; width: 60px; height: 60px; background: #E31C25; color: white; border-radius: 20px; box-shadow: 0 10px 30px rgba(227, 28, 37, 0.4); display: flex; justify-content: center; align-items: center; cursor: pointer; z-index: 9999; transition: transform 0.2s; }
-    .k-fab:hover { transform: scale(1.1); }
-    .k-pop { position: fixed; bottom: 100px; left: 30px; width: 320px; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); z-index: 9999; display: none; overflow: hidden; animation: slideUp 0.3s ease; border: 1px solid #eee; }
-    @keyframes slideUp { from{opacity:0; transform:translateY(20px)} to{opacity:1; transform:translateY(0)} }
-    .k-pop-head { background: #f9fafb; padding: 12px 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-    .k-pop-body { padding: 15px; color: #333; font-size: 14px; line-height: 1.5; }
-    .k-pop-act { display: block; width: 100%; padding: 12px; text-align: center; background: #E31C25; color: white; text-decoration: none; font-weight: 600; }
-    .k-badge { position: absolute; top: -5px; right: -5px; background: #111827; color: white; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; display: flex; justify-content: center; align-items: center; border: 2px solid white; }
+    .k-fab { position: fixed; bottom: 30px; left: 30px; width: 60px; height: 60px; background: #E31C25; color: white; border-radius: 50%; box-shadow: 0 4px 20px rgba(227, 28, 37, 0.4); display: flex; justify-content: center; align-items: center; cursor: pointer; z-index: 10000; transition: transform 0.2s; }
+    .k-fab:hover { transform: scale(1.05); }
+    .k-badge { position: absolute; top: 0; right: 0; background: #111827; color: white; border: 2px solid #fff; min-width: 22px; height: 22px; border-radius: 11px; font-size: 11px; font-weight: bold; display: flex; justify-content: center; align-items: center; padding: 0 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    
+    .k-pop { position: fixed; bottom: 100px; left: 30px; width: 300px; background: white; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); z-index: 10000; display: none; overflow: hidden; border: 1px solid #f0f0f0; animation: kSlideUp 0.4s ease-out; }
+    @keyframes kSlideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+    .k-pop-head { background: #f9fafb; padding: 12px 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #374151; }
+    .k-pop-body { padding: 15px; color: #4b5563; font-size: 14px; line-height: 1.4; }
+    .k-pop-act { display: block; width: 100%; padding: 10px; text-align: center; background: #E31C25; color: white; text-decoration: none; font-weight: 500; font-size: 13px; }
 </style>
 
+<!-- Elementos Visuais -->
 <div class="k-fab" onclick="window.location.href='/central-mensagens'">
-    <i class="fas fa-comment-dots fa-lg"></i>
-    <div class="k-badge" id="kBadge" style="display:none">!</div>
+    <i class="fas fa-comment-alt fa-lg"></i>
+    <div class="k-badge" id="kBadge" style="display:none">0</div>
 </div>
 
 <div class="k-pop" id="kPop">
     <div class="k-pop-head">
-        <strong style="color:#E31C25" id="kUser">Nova Mensagem</strong>
-        <i class="fas fa-times" style="cursor:pointer; color:#999" onclick="document.getElementById('kPop').style.display='none'"></i>
+        <span id="kFrom">Nova Notificação</span>
+        <i class="fas fa-times" style="cursor:pointer; color:#9ca3af" onclick="closeKPop()"></i>
     </div>
     <div class="k-pop-body" id="kText">...</div>
-    <a href="/central-mensagens" class="k-pop-act">Responder</a>
+    <a href="/central-mensagens" class="k-pop-act">Ver Detalhes</a>
 </div>
 
-<audio id="kAudio" src="https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3"></audio>
+<!-- Som -->
+<audio id="kAudio" preload="auto">
+    <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
+</audio>
 
 <script>
-    (function(){
-        const user = <%= typeof user !== 'undefined' && user ? 'true' : 'false' %>;
-        if(user) {
-            setInterval(async () => {
-                try {
-                    const r = await fetch('/api/chat/check');
-                    const d = await r.json();
-                    const pop = document.getElementById('kPop');
-                    const badge = document.getElementById('kBadge');
-                    if(d.hasNew) {
-                        badge.style.display = 'flex';
-                        if(pop.style.display === 'none' || pop.style.display === '') {
-                            document.getElementById('kUser').innerText = d.from;
-                            document.getElementById('kText').innerText = d.text;
-                            pop.style.display = 'block';
-                            document.getElementById('kAudio').play().catch(()=>{});
-                        }
-                    } else { badge.style.display = 'none'; }
-                } catch(e){}
-            }, 3000);
+    document.addEventListener('DOMContentLoaded', () => {
+        // Variáveis de Estado (Memória)
+        let localLastId = 0; // Armazena o ID da última mensagem conhecida
+        let firstRun = true;
+        
+        // Verifica se usuário está logado (via EJS ou verificação de cookie/DOM)
+        // Se você tiver uma variável global 'user', use-a. Caso contrário, o fetch vai retornar erro e o catch pega.
+        const audio = document.getElementById('kAudio');
+
+        async function monitorChat() {
+            try {
+                const res = await fetch('/api/chat/check');
+                if(res.status === 401) return; // Não logado
+                
+                const data = await res.json();
+                
+                // 1. Atualiza Badge (Bolinha vermelha)
+                const badge = document.getElementById('kBadge');
+                const unread = parseInt(data.unread || 0);
+                
+                if (unread > 0) {
+                    badge.style.display = 'flex';
+                    badge.innerText = unread > 99 ? '99+' : unread;
+                } else {
+                    badge.style.display = 'none';
+                }
+
+                // 2. Lógica do Bip e Popup (Baseada no ID da Mensagem, não apenas no contador)
+                // Se o ID recebido for MAIOR que o último ID que conhecemos, é uma mensagem nova.
+                if (data.lastId > localLastId) {
+                    
+                    // Se não for a primeira carga da página (evita bip ao dar F5 se já tiver mensagens)
+                    if (!firstRun) {
+                        // Toca Som
+                        try {
+                            audio.currentTime = 0;
+                            let playPromise = audio.play();
+                            if (playPromise !== undefined) {
+                                playPromise.catch(error => { console.log('Autoplay bloqueado'); });
+                            }
+                        } catch(e){}
+
+                        // Mostra Popup com o texto correto (Compra, Status, etc)
+                        showPopup(data.from, data.preview);
+                    }
+                    
+                    // Atualiza nosso "conhecimento" para o novo ID
+                    localLastId = data.lastId;
+                }
+                
+                firstRun = false;
+
+            } catch (err) {
+                // Silêncio em erro de rede
+            }
         }
-    })();
+
+        function showPopup(from, text) {
+            const pop = document.getElementById('kPop');
+            document.getElementById('kFrom').innerText = from || 'Sistema';
+            document.getElementById('kText').innerHTML = text || 'Você tem novas mensagens.';
+            
+            pop.style.display = 'block';
+            
+            // Auto-hide após 5 segundos
+            if (window.popTimeout) clearTimeout(window.popTimeout);
+            window.popTimeout = setTimeout(closeKPop, 5000);
+        }
+
+        window.closeKPop = function() {
+            document.getElementById('kPop').style.display = 'none';
+        }
+
+        // Verifica a cada 3.5 segundos
+        setInterval(monitorChat, 3500);
+    });
 </script>
