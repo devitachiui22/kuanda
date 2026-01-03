@@ -1056,6 +1056,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// ========================================================
+// SISTEMA DE CHAT E NOTIFICAÇÕES (LINHA OBRIGATÓRIA)
+// ========================================================
+require('./routes/sistema_chat')(app, db);
+
 // ==================== FUNÇÕES AUXILIARES ====================
 const removeProfilePicture = (filename) => {
   if (!filename) return;
@@ -2846,21 +2851,44 @@ app.get('/perfil', requireAuth, async (req, res) => {
 });
 
 // ======================================================================
-// 2. ROTA DETALHES DO PEDIDO (Físico)
+// 2. ROTA DETALHES DO PEDIDO (CORRIGIDA)
 // ======================================================================
 app.get('/pedido/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const userId = req.session.user.id;
     try {
-        const pedido = await db.query('SELECT * FROM pedidos WHERE id = $1 AND usuario_id = $2', [id, userId]);
-        if (pedido.rows.length === 0) return res.redirect('/perfil');
+        // 1. Busca o pedido E os dados da Loja (Vendedor)
+        // Fazemos um JOIN com usuarios para pegar o nome da loja e telefone
+        const pedidoQuery = `
+            SELECT p.*, 
+                   v.nome_loja, 
+                   v.telefone as vendedor_telefone,
+                   v.foto_perfil as loja_foto
+            FROM pedidos p
+            LEFT JOIN usuarios v ON p.vendedor_id = v.id
+            WHERE p.id = $1 AND p.usuario_id = $2
+        `;
+        
+        const pedido = await db.query(pedidoQuery, [id, userId]);
+        
+        if (pedido.rows.length === 0) {
+            req.flash('error', 'Pedido não encontrado.');
+            return res.redirect('/perfil');
+        }
 
-        const itens = await db.query(`
-            SELECT ip.*, p.nome, p.imagem_principal
+        // 2. Busca os itens E os dados do Produto (Imagem e Nome)
+        // Corrigimos para pegar 'imagem1' e renomear 'nome' para 'produto_nome'
+        const itensQuery = `
+            SELECT ip.*, 
+                   prod.nome as produto_nome, 
+                   prod.imagem1,
+                   prod.imagem2
             FROM itens_pedido ip
-            JOIN produtos p ON ip.produto_id = p.id
+            JOIN produtos prod ON ip.produto_id = prod.id
             WHERE ip.pedido_id = $1
-        `, [id]);
+        `;
+
+        const itens = await db.query(itensQuery, [id]);
 
         res.render('pedido-detalhes', {
             pedido: pedido.rows[0],
@@ -2868,7 +2896,8 @@ app.get('/pedido/:id', requireAuth, async (req, res) => {
             usuario: req.session.user
         });
     } catch (error) {
-        console.error(error);
+        console.error("Erro ao carregar detalhes do pedido:", error);
+        req.flash('error', 'Erro ao carregar pedido.');
         res.redirect('/perfil');
     }
 });
@@ -4157,41 +4186,77 @@ app.get('/game/:id', async (req, res) => {
 });
 
 // B. SOLICITAR COMPRA (POST)
+// ======================================================================
+// ROTA DE COMPRA DE JOGO (COM VALIDAÇÕES + NOTIFICAÇÃO AO ADMIN)
+// ======================================================================
 app.post('/game/:id/comprar', requireAuth, async (req, res) => {
     try {
-        // Verifica se jogo existe e tem preço
-        const jogoCheck = await db.query('SELECT preco FROM jogos WHERE id = $1', [req.params.id]);
-        if (jogoCheck.rows.length === 0) return res.redirect('/games');
-        
-        // Se for grátis, não cria pedido, apenas redireciona (ou libera direto na lógica do GET)
-        if (parseFloat(jogoCheck.rows[0].preco) <= 0) {
-            return res.redirect(`/game/${req.params.id}`);
-        }
+        const jogoId = req.params.id;
+        const userId = req.session.user.id;
 
-        // Verifica duplicidade de pedido
-        const existe = await db.query(
-            'SELECT id FROM pedidos_acesso WHERE usuario_id=$1 AND jogo_id=$2', 
-            [req.session.user.id, req.params.id]
+        // 1️⃣ Verifica se o jogo existe e obtém o preço
+        const jogoCheck = await db.query(
+            'SELECT preco FROM jogos WHERE id = $1',
+            [jogoId]
         );
-        
-        if(existe.rows.length === 0) {
-            await db.query(
-                'INSERT INTO pedidos_acesso (usuario_id, jogo_id, status) VALUES ($1, $2, $3)', 
-                [req.session.user.id, req.params.id, 'pendente']
-            );
-            req.flash('success', 'Pedido de compra realizado! Aguarde a aprovação do pagamento.');
-        } else {
-            req.flash('info', 'Você já possui um pedido em andamento para este jogo.');
-        }
-        
-        res.redirect(`/game/${req.params.id}`);
 
-    } catch(err) {
+        if (jogoCheck.rows.length === 0) {
+            req.flash('error', 'Jogo não encontrado.');
+            return res.redirect('/games');
+        }
+
+        const preco = parseFloat(jogoCheck.rows[0].preco);
+
+        // 2️⃣ Se for grátis, não cria pedido
+        if (preco <= 0) {
+            req.flash('info', 'Este jogo é gratuito.');
+            return res.redirect(`/game/${jogoId}`);
+        }
+
+        // 3️⃣ Verifica duplicidade de pedido
+        const existe = await db.query(
+            'SELECT id FROM pedidos_acesso WHERE usuario_id = $1 AND jogo_id = $2',
+            [userId, jogoId]
+        );
+
+        if (existe.rows.length > 0) {
+            req.flash('info', 'Você já possui um pedido em andamento para este jogo.');
+            return res.redirect(`/game/${jogoId}`);
+        }
+
+        // 4️⃣ Cria o pedido
+        await db.query(
+            'INSERT INTO pedidos_acesso (usuario_id, jogo_id, status) VALUES ($1, $2, $3)',
+            [userId, jogoId, 'pendente']
+        );
+
+        // 5️⃣ Busca um admin para notificação
+        const adminRes = await db.query(
+            "SELECT id FROM usuarios WHERE tipo = 'admin' ORDER BY id ASC LIMIT 1"
+        );
+
+        const adminId = adminRes.rows.length > 0 ? adminRes.rows[0].id : null;
+
+        // 6️⃣ Dispara notificação (se o sistema existir)
+        if (adminId && req.app.sysNotification) {
+            await req.app.sysNotification(
+                userId,
+                adminId,
+                `🎮 Nova solicitação de compra do jogo ID: ${jogoId}.`,
+                'sistema'
+            );
+        }
+
+        req.flash('success', 'Pedido de compra realizado! O admin foi notificado.');
+        res.redirect(`/game/${jogoId}`);
+
+    } catch (err) {
         console.error(err);
         req.flash('error', 'Erro ao processar o pedido.');
         res.redirect(`/game/${req.params.id}`);
     }
 });
+
 
 // =======================================================
 // ROTAS ADMIN: GESTÃO DE PEDIDOS DE JOGOS
@@ -4426,39 +4491,33 @@ app.get('/planos', async (req, res) => {
 });
 
 // 2. PROCESSAR ADESÃO (LÓGICA FINANCEIRA + WHATSAPP)
+// ROTA DE ASSINATURA COM NOTIFICAÇÃO AO ADMIN
 app.post('/planos/aderir', requireAuth, async (req, res) => {
     const { tipo_plano, nome_plano, valor } = req.body;
-    
+    const userId = req.session.user.id;
+
     try {
-        const userId = req.session.user.id;
-
-        // 1. Verificar se já tem pedido pendente para evitar duplicação
-        const pendente = await db.query(
-            "SELECT id FROM assinaturas WHERE usuario_id = $1 AND status = 'pendente'", 
-            [userId]
-        );
-
-        if (pendente.rows.length > 0) {
-            req.flash('info', 'Você já possui uma solicitação em análise. Verifique seu perfil.');
-            return res.redirect('/planos');
-        }
-
-        // 2. Registrar no Banco de Dados
         await db.query(`
             INSERT INTO assinaturas (usuario_id, tipo, valor, status, created_at)
-            VALUES ($1, $2, $3, 'pendente', CURRENT_TIMESTAMP)
+            VALUES ($1, $2, $3, 'pendente', NOW())
         `, [userId, tipo_plano, valor]);
 
-        // 3. Gerar Link do WhatsApp
-        const texto = `Olá Kuanda! 👋%0AQuero assinar o plano: *${nome_plano}*.%0AValor: ${valor} Kz.%0AMEU ID: ${userId}%0A%0AComo faço o pagamento?`;
-        const linkZap = `https://wa.me/244923456789?text=${texto}`;
+        // Busca ID do Admin para notificar
+        const adminRes = await db.query("SELECT id FROM usuarios WHERE tipo='admin' LIMIT 1");
+        const adminId = adminRes.rows.length > 0 ? adminRes.rows[0].id : 1;
 
-        // 4. Redirecionar
-        res.redirect(linkZap);
+        // DISPARA NOTIFICAÇÃO
+        if (req.app.sysNotification) {
+            await req.app.sysNotification(
+                userId, adminId,
+                `📄 Nova solicitação de plano: ${nome_plano} (${valor} Kz).`,
+                'sistema'
+            );
+        }
 
-    } catch (error) {
-        console.error('Erro ao aderir plano:', error);
-        req.flash('error', 'Erro ao processar sua solicitação. Tente novamente.');
+        res.redirect('https://wa.me/244974120856?text=Solicitei+Plano');
+    } catch (e) {
+        console.error(e);
         res.redirect('/planos');
     }
 });
@@ -5844,50 +5903,135 @@ app.post('/admin/filmes/:id/toggle-status', requireAdmin, async (req, res) => {
 });
 
 // =======================================================
-// ROTAS PÚBLICAS: CINEMA / VISUALIZAÇÃO
+// ROTA DETALHES DO FILME (CORRIGIDA PARA STREAM/WATCH)
 // =======================================================
-
-// 1. DETALHES DO FILME
 app.get('/filme/:id', async (req, res) => {
     try {
-        // Buscar filme ativo
-        const filmeResult = await db.query('SELECT * FROM filmes WHERE id = $1 AND ativo = true', [req.params.id]);
+        const filmeId = req.params.id;
+        
+        // 1. Buscar filme
+        const filmeResult = await db.query('SELECT * FROM filmes WHERE id = $1 AND ativo = true', [filmeId]);
         if (filmeResult.rows.length === 0) return res.redirect('/');
         const filme = filmeResult.rows[0];
 
-        // Buscar Links
-        const linksResult = await db.query('SELECT * FROM filme_links WHERE filme_id = $1 ORDER BY ordem', [req.params.id]);
-        
-        // Verificar Acesso
+        // 2. Buscar Links
+        const linksResult = await db.query('SELECT * FROM filme_links WHERE filme_id = $1 ORDER BY ordem', [filmeId]);
+        let linksRaw = linksResult.rows;
+
+        // 3. Verificar Acesso (Lógica de Pagamento)
         let temAcesso = false;
         let pedidoPendente = false;
 
-        if (parseFloat(filme.preco) <= 0) {
-            temAcesso = true; // Gratuito
+        // Lógica de verificação (Gratis / Admin / Comprado / Assinatura)
+        if (!filme.preco || parseFloat(filme.preco) <= 0) {
+            temAcesso = true; 
         } else if (req.session.user) {
-            // Verificar compra aprovada
-            const pedido = await db.query(
-                'SELECT status FROM pedidos_acesso WHERE usuario_id = $1 AND filme_id = $2',
-                [req.session.user.id, filme.id]
-            );
-            
-            if (pedido.rows.length > 0) {
-                if (pedido.rows[0].status === 'aprovado') temAcesso = true;
-                if (pedido.rows[0].status === 'pendente') pedidoPendente = true;
+            if (req.session.user.tipo === 'admin') {
+                temAcesso = true;
+            } else {
+                const pedido = await db.query(
+                    'SELECT status FROM pedidos_acesso WHERE usuario_id = $1 AND filme_id = $2',
+                    [req.session.user.id, filme.id]
+                );
+                
+                if (pedido.rows.length > 0) {
+                    if (pedido.rows[0].status === 'aprovado') temAcesso = true;
+                    if (pedido.rows[0].status === 'pendente') pedidoPendente = true;
+                }
+                
+                // Verifica Assinatura (se aplicável no seu sistema)
+                if (!temAcesso) {
+                     const assinatura = await db.query(
+                        `SELECT id FROM usuarios WHERE id = $1 AND (premium_cine_ate >= NOW() OR premium_games_ate >= NOW())`,
+                        [req.session.user.id]
+                    );
+                    if (assinatura.rows.length > 0) temAcesso = true;
+                }
             }
+        }
+
+        // 4. FUNÇÃO DE CONVERSÃO DE LINKS (O SEGREDO ESTÁ AQUI)
+        const processarLinkParaPlayer = (linkOriginal) => {
+            let url = linkOriginal.trim();
+            let tipo = 'download'; // Padrão
+            let icone = 'fas fa-download';
+
+            // --- REGRA 1: EMBEDPLAY (Conversão de /d/ para /e/) ---
+            if (url.includes('embedplay') || url.includes('upns.ink')) {
+                tipo = 'stream';
+                icone = 'fas fa-play-circle';
+                
+                // Se tiver /d/ (download), troca para /e/ (embed)
+                // Se o seu EmbedPlay usa /w/ para watch, troque '/e/' por '/w/' abaixo
+                if (url.includes('/d/')) {
+                    url = url.replace('/d/', '/e/'); 
+                } 
+                // Se não tiver nem /d/ nem /e/, tenta forçar a estrutura se for apenas o ID
+                // (Opcional, depende de como você salva o link)
+            }
+
+            // --- REGRA 2: GOOGLE DRIVE (View -> Preview) ---
+            else if (url.includes('drive.google.com')) {
+                // Google Drive geralmente bloqueia players se não for convertido para /preview
+                if (url.includes('/view')) {
+                    url = url.replace('/view', '/preview');
+                    tipo = 'stream';
+                    icone = 'fab fa-google-drive';
+                } else if (url.includes('/file/d/')) {
+                    // Tenta garantir que termine com preview
+                    tipo = 'stream';
+                    icone = 'fab fa-google-drive';
+                    if (!url.includes('/preview')) url += '/preview';
+                }
+            }
+
+            // --- REGRA 3: YOUTUBE (Watch -> Embed) ---
+            else if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                tipo = 'stream';
+                icone = 'fab fa-youtube';
+                if (url.includes('watch?v=')) {
+                    url = url.replace('watch?v=', 'embed/');
+                }
+            }
+
+            // --- REGRA 4: TERABOX / MEGA / MEDIAFIRE (Geralmente Download) ---
+            // Terabox e Mega são difíceis de embedar sem API paga ou métodos complexos,
+            // então mantemos como download para garantir que funcione.
+            else if (url.includes('mega.nz')) { icone = 'fas fa-cloud'; }
+            else if (url.includes('mediafire.com')) { icone = 'fas fa-fire'; }
+            else if (url.includes('terabox.com')) { icone = 'fas fa-box'; }
+
+            return { url, tipo, icone };
+        };
+
+        // 5. PROCESSAR A LISTA
+        let playerLinks = [];
+        if (temAcesso) {
+            playerLinks = linksRaw.map(link => {
+                const processado = processarLinkParaPlayer(link.url);
+                return {
+                    id: link.id,
+                    label: link.label || `Opção ${link.ordem + 1}`,
+                    url: processado.url,         // URL Pronta para o Player
+                    original_url: link.url,      // URL Original (Backup)
+                    tipo: processado.tipo,       // 'stream' ou 'download'
+                    icone: processado.icone
+                };
+            });
         }
 
         res.render('cinema/detalhe', {
             title: `${filme.titulo} - Kuanda Cinema`,
             filme: filme,
-            links: linksResult.rows,
+            links: playerLinks,
             temAcesso: temAcesso,
             pedidoPendente: pedidoPendente,
-            user: req.session.user || null
+            user: req.session.user || null,
+            carrinho: req.session.carrinho || []
         });
 
     } catch (error) {
-        console.error(error);
+        console.error('Erro na rota filme/detalhe:', error);
         res.redirect('/');
     }
 });
@@ -6459,6 +6603,73 @@ app.get('/checkout', requireAuth, (req, res) => {
     console.error(error.stack);
     req.flash('error', 'Erro ao processar checkout');
     res.redirect('/carrinho');
+  }
+});
+
+// ROTA DE CHECKOUT COM NOTIFICAÇÃO AUTOMÁTICA
+app.post('/checkout/processar', requireAuth, async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const carrinho = req.session.carrinho || [];
+    if (carrinho.length === 0) throw new Error('Carrinho vazio');
+
+    // Agrupa itens por vendedor
+    const porVendedor = {};
+    carrinho.forEach(i => {
+      if(!porVendedor[i.vendedor_id]) porVendedor[i.vendedor_id] = [];
+      porVendedor[i.vendedor_id].push(i);
+    });
+
+    const userId = req.session.user.id;
+
+    for (const vid in porVendedor) {
+      const itens = porVendedor[vid];
+      const total = itens.reduce((s, i) => s + (i.preco * i.quantidade), 0);
+
+      // 1. Cria Pedido
+      const pRes = await client.query(`
+        INSERT INTO pedidos (usuario_id, vendedor_id, valor_total, status, created_at)
+        VALUES ($1, $2, $3, 'pendente', NOW()) RETURNING id
+      `, [userId, vid, total]);
+      const pedId = pRes.rows[0].id;
+
+      // 2. Insere Itens
+      for (const item of itens) {
+        await client.query(`
+          INSERT INTO itens_pedido (pedido_id, produto_id, quantidade, preco_unitario)
+          VALUES ($1, $2, $3, $4)
+        `, [pedId, item.id, item.quantidade, item.preco]);
+      }
+
+      // 3. DISPARA NOTIFICAÇÃO (Aqui acontece a mágica)
+      if (req.app.sysNotification) {
+        // Para o Vendedor
+        await req.app.sysNotification(
+            userId, vid, 
+            `📦 Novo pedido #${pedId} recebido (Kz ${total}). Verifique o painel.`, 
+            'compra', pedId
+        );
+        // Para o Cliente (Confirmação)
+        await req.app.sysNotification(
+            vid, userId, 
+            `✅ Pedido #${pedId} enviado ao vendedor. Aguarde processamento.`, 
+            'status', pedId
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    req.session.carrinho = [];
+    req.flash('success', 'Pedido realizado! Verifique suas notificações.');
+    res.redirect('/perfil');
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error(error);
+    res.redirect('/carrinho');
+  } finally {
+    client.release();
   }
 });
 
