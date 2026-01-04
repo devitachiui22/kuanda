@@ -224,19 +224,29 @@ const limparBackupsAntigos = async (daysOld = 30) => {
     }
 };
 
-// --- CONFIGURAÇÃO DO NODEMAILER ---
+// ==================== CONFIGURAÇÃO DE EMAIL (CORRIGIDA) ====================
 const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // true para porta 465
+    host: 'smtp.gmail.com',  // Força o endereço do servidor
+    port: 465,               // Porta segura (SSL) que não costuma ser bloqueada
+    secure: true,            // Obrigatório para porta 465
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        pass: process.env.EMAIL_PASS.replace(/\s+/g, '') // Remove espaços da senha automaticamente
     },
     tls: {
-        rejectUnauthorized: false // Ajuda em alguns casos de erro de certificado no Render
+        rejectUnauthorized: false // Ajuda a evitar erros de certificado no Render
     },
-    connectionTimeout: 10000 // Aumenta o tempo de espera para 10 segundos
+    connectionTimeout: 10000, // 10 segundos para conectar
+    greetingTimeout: 5000     // 5 segundos para o 'oi' do servidor
+});
+
+// Teste de verificação ao iniciar
+transporter.verify(function (error, success) {
+    if (error) {
+        console.log("❌ Erro na conexão SMTP:", error.message);
+    } else {
+        console.log("✅ Servidor de Email pronto para envios!");
+    }
 });
 
 // --- CONFIGURAÇÃO DO PASSPORT (GOOGLE) ---
@@ -1041,19 +1051,51 @@ app.use(session({
   }
 }));
 
+// ==================== CONFIGURAÇÃO DE MIDDLEWARES (ORDEM CORRIGIDA) ====================
+
 app.use(flash());
 
 app.use(expressLayouts);
 app.set('layout', 'layout');
-app.use('/', vendasRoutes);
 
+// 1. MIDDLEWARE GLOBAL DE VARIÁVEIS (Deve vir ANTES das rotas)
+// Define usuário, mensagens e script de alerta para TODAS as views
 app.use((req, res, next) => {
+  // A. Disponibilizar Usuário
   res.locals.user = req.session.user || null;
-  res.locals.messages = req.flash();
+  
+  // B. Capturar Mensagens Flash (Uma única vez para evitar conflitos)
+  const messages = req.flash();
+  res.locals.messages = messages; 
   res.locals.currentUrl = req.originalUrl;
+
+  // C. Gerar Script do SweetAlert2 Automaticamente (O Fallback Visual)
+  let scriptNotificacao = '';
+  
+  // Configuração visual do Toast
+  const toastConfig = `toast: true, position: 'top-end', showConfirmButton: false, timer: 4000, timerProgressBar: true, didOpen: (toast) => { toast.addEventListener('mouseenter', Swal.stopTimer); toast.addEventListener('mouseleave', Swal.resumeTimer); }`;
+
+  // Monta o Javascript baseado na mensagem recebida
+  if (messages.success && messages.success.length > 0) {
+      scriptNotificacao = `Swal.fire({ icon: 'success', title: '${messages.success[0].replace(/'/g, "\\'")}', ${toastConfig} });`;
+  } 
+  else if (messages.error && messages.error.length > 0) {
+      scriptNotificacao = `Swal.fire({ icon: 'error', title: '${messages.error[0].replace(/'/g, "\\'")}', ${toastConfig} });`;
+  }
+  else if (messages.info && messages.info.length > 0) {
+      scriptNotificacao = `Swal.fire({ icon: 'info', title: '${messages.info[0].replace(/'/g, "\\'")}', ${toastConfig} });`;
+  }
+  else if (messages.warning && messages.warning.length > 0) {
+      scriptNotificacao = `Swal.fire({ icon: 'warning', title: '${messages.warning[0].replace(/'/g, "\\'")}', ${toastConfig} });`;
+  }
+
+  // Injeta o script na variável local para o layout.ejs ler
+  res.locals.notificacaoScript = scriptNotificacao;
+
   next();
 });
 
+// 2. MIDDLEWARE DO CARRINHO (Antes das rotas)
 app.use((req, res, next) => {
   if (!req.session.carrinho) {
     req.session.carrinho = [];
@@ -1062,10 +1104,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========================================================
-// SISTEMA DE CHAT E NOTIFICAÇÕES (LINHA OBRIGATÓRIA)
-// ========================================================
+// 3. SISTEMA DE CHAT (Antes das rotas)
 require('./routes/sistema_chat')(app, db);
+
+// 4. IMPORTAÇÃO DAS ROTAS (AGORA SIM, NO FINAL)
+// Como os middlewares acima já rodaram, a página vai ter acesso ao 'user' e 'script'
+app.use('/', vendasRoutes);
+
+// ==================== FIM DA CORREÇÃO ====================
+
 
 // ==================== FUNÇÕES AUXILIARES ====================
 const removeProfilePicture = (filename) => {
@@ -2208,113 +2255,144 @@ app.post('/loja/:id/seguir', requireAuth, async (req, res) => {
   }
 });
 
-// ==================== ROTAS DE AUTENTICAÇÃO ====================
+// ==================== ROTA QUE FALTAVA ====================
 app.get('/login', (req, res) => {
-  if (req.session.user) {
-    return res.redirect('/');
-  }
-  res.render('auth/login', { title: 'Login - KuandaShop' });
+    // Se o usuário já estiver logado, manda para a home
+    if (req.session.user) {
+        return res.redirect('/');
+    }
+    // Renderiza o arquivo da pasta views/auth/login.ejs
+    res.render('auth/login', { 
+        title: 'Login - KuandaShop', 
+        layout: false // Importante: usa o HTML blindado sem o layout padrão
+    });
 });
+// ==========================================================
 
+// ==================== ROTAS DE AUTENTICAÇÃO ====================
 app.post('/login', async (req, res) => {
-  const { email, senha, google_id } = req.body;
-
   try {
-    /* =======================
-       1. BUSCAR USUÁRIO
-    ======================= */
+    const { email, senha, google_id } = req.body;
+
+    // 1. Validação básica de entrada
+    if (!email) {
+      req.flash('error', 'O campo e-mail é obrigatório.');
+      return req.session.save(() =>
+        res.redirect('/login?error=email_vazio')
+      );
+    }
+
+    // 2. Buscar Usuário
     const result = await db.query(
       'SELECT * FROM usuarios WHERE email = $1',
       [email.trim().toLowerCase()]
     );
 
     if (result.rows.length === 0) {
-      req.flash('error', 'Email ou senha incorretos');
-      return res.redirect('/login');
+      req.flash('error', 'Usuário não encontrado.');
+      return req.session.save(() =>
+        res.redirect('/login?error=usuario_nao_encontrado')
+      );
     }
 
     const user = result.rows[0];
 
-    /* =======================
-       2. LOGIN COM GOOGLE
-    ======================= */
+    // 3. Lógica de Login (Google vs Senha)
     if (google_id) {
-      if (!user.google_id || user.google_id !== google_id) {
-        req.flash('error', 'Conta Google não vinculada a este email');
-        return res.redirect('/login');
-      }
-    } else {
-      /* =======================
-         3. VERIFICAR EMAIL CONFIRMADO
-      ======================= */
-      if (!user.email_verificado) {
-        req.flash(
-          'error',
-          'Sua conta ainda não foi ativada. Verifique seu e-mail para continuar.'
+      // Tentativa de login Google
+      if (!user.google_id) {
+        req.flash('error', 'Esta conta foi criada com senha. Use sua senha.');
+        return req.session.save(() =>
+          res.redirect('/login?error=use_senha')
         );
-        return res.redirect('/login');
       }
 
-      /* =======================
-         4. VALIDAR SENHA
-      ======================= */
+      if (user.google_id !== google_id) {
+        req.flash('error', 'Conta Google inválida para este e-mail.');
+        return req.session.save(() =>
+          res.redirect('/login?error=google_invalido')
+        );
+      }
+    } else {
+      // Tentativa de login com senha
       if (!user.senha) {
-        req.flash('error', 'Esta conta utiliza login com Google');
-        return res.redirect('/login');
+        req.flash('info', 'Esta conta usa login social. Clique no botão Google.');
+        return req.session.save(() =>
+          res.redirect('/login?error=conta_google')
+        );
+      }
+
+      if (!senha) {
+        req.flash('error', 'Senha obrigatória.');
+        return req.session.save(() =>
+          res.redirect('/login?error=senha_vazia')
+        );
       }
 
       const senhaValida = await bcrypt.compare(senha, user.senha);
       if (!senhaValida) {
-        req.flash('error', 'Email ou senha incorretos');
-        return res.redirect('/login');
+        req.flash('error', 'Senha incorreta.');
+        return req.session.save(() =>
+          res.redirect('/login?error=senha_incorreta')
+        );
       }
     }
 
-    /* =======================
-       5. VERIFICAR LOJA (VENDEDOR)
-    ======================= */
-    if (user.tipo === 'vendedor' && !user.loja_ativa) {
-      req.flash(
-        'error',
-        'Sua loja está desativada. Entre em contato com o administrador.'
+    // 4. Verificações de Status
+    if (!user.email_verificado && !user.google_id) {
+      req.flash('warning', 'Verifique seu e-mail para ativar a conta.');
+      return req.session.save(() =>
+        res.redirect('/login?error=email_nao_verificado')
       );
-      return res.redirect('/login');
     }
 
-    /* =======================
-       6. CRIAR SESSÃO
-    ======================= */
+    if (user.tipo === 'vendedor' && !user.loja_ativa) {
+      req.flash('error', 'Sua loja está inativa. Contate o suporte.');
+      return req.session.save(() =>
+        res.redirect('/login?error=loja_inativa')
+      );
+    }
+
+    // 5. Montar Sessão (SEGURA)
     req.session.user = {
       id: user.id,
       nome: user.nome,
       email: user.email,
-      tipo: user.tipo,
-      nome_loja: user.nome_loja,
-      loja_ativa: user.loja_ativa,
-      foto_perfil: user.foto_perfil,
-      telefone: user.telefone,
-      plano_id: user.plano_id,
-      limite_produtos: user.limite_produtos,
+      tipo: user.tipo, // admin | vendedor | cliente
+      nome_loja: user.nome_loja || null,
+      loja_ativa: user.loja_ativa || false,
+      foto_perfil: user.foto_perfil || null,
+      plano_id: user.plano_id || null,
+      limite_produtos: user.limite_produtos || 0,
       google: !!user.google_id
     };
 
-    /* =======================
-       7. REDIRECIONAMENTO
-    ======================= */
-    req.flash('success', `Bem-vindo de volta, ${user.nome}!`);
+    // 6. Definir destino seguro
+    const destino =
+      user.tipo === 'admin'
+        ? '/admin'
+        : user.tipo === 'vendedor'
+        ? '/vendedor'
+        : '/';
 
-    if (user.tipo === 'admin') {
-      return res.redirect('/admin');
-    } else if (user.tipo === 'vendedor') {
-      return res.redirect('/vendedor');
-    } else {
-      return res.redirect('/');
-    }
+    // 7. Sucesso
+    req.flash('success', `Bem-vindo, ${user.nome.split(' ')[0]}!`);
+
+    // IMPORTANTE: salvar sessão explicitamente
+    req.session.save((err) => {
+      if (err) {
+        console.error('Erro ao salvar sessão:', err);
+        return res.redirect('/login?error=erro_sessao');
+      }
+      return res.redirect(destino);
+    });
 
   } catch (error) {
-    console.error('Erro no login:', error);
-    req.flash('error', 'Erro interno do servidor');
-    return res.redirect('/login');
+    console.error('CRASH NO LOGIN:', error);
+    req.flash('error', 'Erro interno ao processar login.');
+    return req.session.save(() =>
+      res.redirect('/login?error=erro_interno')
+    );
   }
 });
 
@@ -2327,68 +2405,69 @@ app.get('/registro', (req, res) => {
   res.render('auth/registro', { title: 'Registro - KuandaShop' });
 });
 
+/* =========================================================================
+   ROTA DE REGISTRO BLINDADA (PROTOCOLO VENOM)
+   ========================================================================= */
 app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
-  const {
-    nome,
-    email,
-    senha,
-    telefone,
-    tipo,
-    nome_loja,
-    descricao_loja,
-    google_id // ← usado quando vier do Google
-  } = req.body;
+  // Sanitização inicial para evitar erros de leitura
+  const nome = req.body.nome || '';
+  const email = (req.body.email || '').trim().toLowerCase();
+  const senha = req.body.senha || '';
+  const telefone = req.body.telefone || '';
+  const tipo = req.body.tipo || 'cliente';
+  const nome_loja = req.body.nome_loja || '';
+  const descricao_loja = req.body.descricao_loja || '';
+  const google_id = req.body.google_id || null;
 
   try {
     /* =======================
-       1. VALIDAÇÕES BÁSICAS
+       1. VALIDAÇÕES DE ENTRADA
     ======================= */
-    if (!nome || !email || (!senha && !google_id)) {
-      req.flash('error', 'Nome, email e senha são obrigatórios');
-      return res.redirect('/registro');
+    
+    // Validar campos obrigatórios básicos
+    if (!nome || !email) {
+      if (req.file) removeProfilePicture(req.file.filename);
+      req.flash('error', 'Nome e e-mail são obrigatórios.');
+      return req.session.save(() => res.redirect('/registro?error=campos_vazios'));
     }
 
+    // Validar Senha (apenas se não for login Google)
     if (!google_id && senha.length < 6) {
-      req.flash('error', 'A senha deve ter pelo menos 6 caracteres');
-      return res.redirect('/registro');
+      if (req.file) removeProfilePicture(req.file.filename);
+      req.flash('error', 'A senha deve ter no mínimo 6 caracteres.');
+      // VENOM: Envia parâmetro na URL
+      return req.session.save(() => res.redirect('/registro?error=senha_curta'));
     }
 
+    // Validar Vendedor
     if (tipo === 'vendedor' && !nome_loja) {
-      req.flash('error', 'Nome da loja é obrigatório para vendedores');
-      return res.redirect('/registro');
+      if (req.file) removeProfilePicture(req.file.filename);
+      req.flash('error', 'Vendedores precisam informar o Nome da Loja.');
+      // VENOM: Envia parâmetro na URL
+      return req.session.save(() => res.redirect('/registro?error=loja_sem_nome'));
     }
 
     /* =======================
-       2. VERIFICAR SE EMAIL EXISTE
+       2. VERIFICAR DUPLICIDADE
     ======================= */
-    const emailExiste = await db.query(
-      'SELECT id FROM usuarios WHERE email = $1',
-      [email.trim().toLowerCase()]
-    );
+    const emailExiste = await db.query('SELECT id FROM usuarios WHERE email = $1', [email]);
 
     if (emailExiste.rows.length > 0) {
       if (req.file) removeProfilePicture(req.file.filename);
-      req.flash('error', 'Este email já está cadastrado');
-      return res.redirect('/registro');
+      req.flash('error', 'Este endereço de e-mail já está cadastrado.');
+      // VENOM: Código crucial para o alerta vermelho no frontend
+      return req.session.save(() => res.redirect('/registro?error=email_existente'));
     }
 
     /* =======================
-       3. PROCESSAR SENHA / GOOGLE
+       3. PREPARAÇÃO DE DADOS
     ======================= */
     const senhaHash = google_id ? null : await bcrypt.hash(senha, 10);
-    const email_verificado = google_id ? true : false;
-    const tokenVerificacao = google_id
-      ? null
-      : crypto.randomBytes(32).toString('hex');
-
-    /* =======================
-       4. FOTO DE PERFIL
-    ======================= */
+    const email_verificado = !!google_id; // Se for Google, já nasce verificado
+    const tokenVerificacao = google_id ? null : crypto.randomBytes(32).toString('hex');
     const foto_perfil = req.file ? req.file.filename : null;
 
-    /* =======================
-       5. PLANO DO VENDEDOR
-    ======================= */
+    // Lógica de Plano para Vendedor
     let plano_id = null;
     let limite_produtos = 10;
 
@@ -2396,7 +2475,6 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
       const planoBasico = await db.query(
         "SELECT id, limite_produtos FROM planos_vendedor WHERE nome = 'Básico' LIMIT 1"
       );
-
       if (planoBasico.rows.length > 0) {
         plano_id = planoBasico.rows[0].id;
         limite_produtos = planoBasico.rows[0].limite_produtos;
@@ -2404,140 +2482,121 @@ app.post('/registro', uploadPerfil.single('foto_perfil'), async (req, res) => {
     }
 
     /* =======================
-       6. INSERIR NO BANCO
+       4. INSERÇÃO NO BANCO
     ======================= */
     const result = await db.query(`
       INSERT INTO usuarios (
-        nome,
-        email,
-        senha,
-        telefone,
-        tipo,
-        nome_loja,
-        descricao_loja,
-        foto_perfil,
-        loja_ativa,
-        plano_id,
-        limite_produtos,
-        email_verificado,
-        token_verificacao,
-        google_id
+        nome, email, senha, telefone, tipo, nome_loja, descricao_loja, 
+        foto_perfil, loja_ativa, plano_id, limite_produtos, 
+        email_verificado, token_verificacao, google_id
       )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
-      )
-      RETURNING id, nome, email, tipo, nome_loja, foto_perfil, plano_id, limite_produtos, email_verificado
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id, nome, email, tipo, nome_loja, foto_perfil, plano_id, limite_produtos
     `, [
-      nome.trim(),
-      email.trim().toLowerCase(),
-      senhaHash,
-      telefone ? telefone.trim() : null,
-      tipo || 'cliente',
-      nome_loja ? nome_loja.trim() : null,
-      descricao_loja ? descricao_loja.trim() : null,
-      foto_perfil,
-      tipo === 'vendedor',
-      plano_id,
-      limite_produtos,
-      email_verificado,
-      tokenVerificacao,
-      google_id || null
+      nome, email, senhaHash, telefone, tipo, nome_loja, descricao_loja, 
+      foto_perfil, tipo === 'vendedor', plano_id, limite_produtos, 
+      email_verificado, tokenVerificacao, google_id
     ]);
 
     const newUser = result.rows[0];
 
-    /* =======================
-       7. BACKUP DA FOTO
-    ======================= */
-    if (req.file) {
+    // Backup da Foto (Opcional, se usar sistema híbrido)
+    if (req.file && typeof salvarBackupImagem === 'function') {
       const filePath = path.join('public/uploads/perfil/', req.file.filename);
       await salvarBackupImagem(filePath, req.file.filename, 'usuarios', newUser.id);
     }
 
-/* =======================
-    8. ENVIAR EMAIL (SE NÃO FOR GOOGLE)
-======================= */
-if (!google_id) {
-  const linkConfirmacao = `${process.env.BASE_URL}/verificar-email/${tokenVerificacao}`;
-
-  try {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: 'Confirme sua conta no KuandaShop',
-        html: `
-          <h2>Olá, ${nome}!</h2>
-          <p>Para ativar sua conta, clique no botão abaixo:</p>
-          <a href="${linkConfirmacao}"
-             style="background:#E31C25;color:#fff;padding:12px 20px;
-                    text-decoration:none;border-radius:6px;display:inline-block">
-             Confirmar E-mail
-          </a>
-          <p>Ou copie: ${linkConfirmacao}</p>
-        `
-      });
-      req.flash('success', 'Cadastro criado! Verifique seu e-mail para ativar a conta.');
-  } catch (emailError) {
-      console.error("❌ Erro ao enviar e-mail de verificação:", emailError.message);
-      
-      // Opcional: Ativar a conta automaticamente se o e-mail falhar (apenas para evitar bloqueio)
-      // await db.query('UPDATE usuarios SET email_verificado = true WHERE id = $1', [newUser.id]);
-      
-      req.flash('warning', 'Conta criada, mas houve um erro ao enviar o e-mail de verificação. Tente logar ou contate o suporte.');
-  }
-
-  return res.redirect('/login');
-}
-
     /* =======================
-       9. AUTO-LOGIN (GOOGLE)
+       5. PÓS-REGISTRO (GOOGLE vs EMAIL)
     ======================= */
-    req.session.user = {
-      id: newUser.id,
-      nome: newUser.nome,
-      email: newUser.email,
-      tipo: newUser.tipo,
-      nome_loja: newUser.nome_loja,
-      foto_perfil: newUser.foto_perfil,
-      plano_id: newUser.plano_id,
-      limite_produtos: newUser.limite_produtos
-    };
+    
+    // CENÁRIO A: Google (Login Automático)
+    if (google_id) {
+      req.session.user = {
+        id: newUser.id,
+        nome: newUser.nome,
+        email: newUser.email,
+        tipo: newUser.tipo,
+        nome_loja: newUser.nome_loja,
+        foto_perfil: newUser.foto_perfil,
+        plano_id: newUser.plano_id,
+        limite_produtos: newUser.limite_produtos,
+        google: true
+      };
 
-    req.flash('success', 'Conta criada com Google com sucesso!');
-    return res.redirect(
-      newUser.tipo === 'admin'
-        ? '/admin'
-        : newUser.tipo === 'vendedor'
-        ? '/vendedor'
-        : '/'
-    );
+      req.flash('success', 'Conta criada com Google com sucesso!');
+      const destino = newUser.tipo === 'admin' ? '/admin' : (newUser.tipo === 'vendedor' ? '/vendedor' : '/');
+      
+      return req.session.save(() => res.redirect(destino));
+    }
+
+    // CENÁRIO B: Email/Senha (Envio de Confirmação)
+    const linkConfirmacao = `${process.env.BASE_URL}/verificar-email/${tokenVerificacao}`;
+    let emailEnviado = false;
+
+    try {
+        await transporter.sendMail({
+          from: `"KuandaShop" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: 'Confirme sua conta no KuandaShop',
+          html: `
+            <h2>Olá, ${nome.split(' ')[0]}!</h2>
+            <p>Bem-vindo ao KuandaShop. Clique abaixo para ativar sua conta:</p>
+            <a href="${linkConfirmacao}" style="background:#E31C25;color:white;padding:12px 24px;text-decoration:none;border-radius:4px;display:inline-block;">Confirmar Conta</a>
+          `
+        });
+        emailEnviado = true;
+    } catch (mailError) {
+        console.error("⚠️ Falha ao enviar email de ativação:", mailError.message);
+        // Opcional: Ativar conta automaticamente se o email falhar em ambiente dev
+        // await db.query('UPDATE usuarios SET email_verificado = true WHERE id = $1', [newUser.id]);
+    }
+
+    // Mensagem final
+    if (emailEnviado) {
+        req.flash('success', 'Conta criada com sucesso! Verifique seu e-mail para ativar.');
+    } else {
+        req.flash('warning', 'Conta criada, mas houve um erro ao enviar o e-mail. Tente fazer login.');
+    }
+
+    // VENOM: Redireciona para login com flag de sucesso para disparar o Modal/Alerta
+    return req.session.save(() => {
+        res.redirect('/login?success=conta_criada');
+    });
 
   } catch (error) {
     if (req.file) removeProfilePicture(req.file.filename);
-    console.error('Erro no registro:', error);
-    req.flash('error', 'Erro ao criar conta. Tente novamente.');
-    res.redirect('/registro');
+    console.error('CRASH REGISTRO:', error);
+    req.flash('error', 'Ocorreu um erro interno ao criar sua conta.');
+    return req.session.save(() => res.redirect('/registro?error=erro_interno'));
   }
 });
 
-
+/* =========================================================================
+   ROTA DE LOGOUT BLINDADA
+   ========================================================================= */
 app.post('/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) {
       console.error('Erro ao fazer logout:', err);
+      return res.redirect('/');
     }
-    res.redirect('/');
+    // Limpa cookie e redireciona com flag Venom
+    res.clearCookie('connect.sid'); 
+    res.redirect('/login?success=logout'); 
   });
 });
 
-// =========================================================================
-// SISTEMA COMPLETO DE RECUPERAÇÃO DE SENHA
-// =========================================================================
+/* =========================================================================
+   SISTEMA DE RECUPERAÇÃO DE SENHA (INTEGRADO)
+   ========================================================================= */
 
-// 1. TELA: Pedir o Link (Esqueceu Senha)
+// 1. TELA: Pedir o Link
 app.get('/recuperar-senha', (req, res) => {
     if (req.session.user) return res.redirect('/perfil');
-    res.render('auth/recuperacao', { title: 'Recuperar Senha' });
+    // Passa messages explicitamente se não estiver usando o middleware global
+    const messages = res.locals.messages || req.flash();
+    res.render('auth/recuperacao', { title: 'Recuperar Senha', messages });
 });
 
 // 2. AÇÃO: Enviar o E-mail
@@ -2545,143 +2604,123 @@ app.post('/recuperar-senha', async (req, res) => {
     const { email } = req.body;
 
     try {
+        if (!email) {
+            req.flash('error', 'Digite seu e-mail.');
+            return req.session.save(() => res.redirect('/recuperar-senha'));
+        }
+
         // Busca o usuário
         const userResult = await db.query('SELECT * FROM usuarios WHERE email = $1', [email.trim().toLowerCase()]);
         const user = userResult.rows[0];
 
-        // Se não existir, mandamos msg de sucesso falsa (segurança) ou avisamos
+        // Se não existir, avisa (ou simula sucesso por segurança, mas aqui vamos avisar)
         if (!user) {
             req.flash('error', 'E-mail não encontrado no sistema.');
-            return res.redirect('/recuperar-senha');
+            return req.session.save(() => res.redirect('/recuperar-senha?error=usuario_nao_encontrado'));
         }
 
-        // Se for conta Google, não tem senha para recuperar
+        // Se for conta Google
         if (!user.senha && user.google_id) {
-            req.flash('error', 'Esta conta utiliza Login com Google. Clique no botão Google para entrar.');
-            return res.redirect('/login');
+            req.flash('error', 'Esta conta usa Login Google. Clique no botão Google para entrar.');
+            return req.session.save(() => res.redirect('/login?error=conta_google'));
         }
 
-        // Gerar Token e Data de Expiração (1 hora)
+        // Gerar Token
         const token = crypto.randomBytes(32).toString('hex');
         const now = new Date();
-        now.setHours(now.getHours() + 1); // Expira em 1 hora
+        now.setHours(now.getHours() + 1); // 1 hora
 
-        // Salvar token no banco
         await db.query(
             'UPDATE usuarios SET reset_token = $1, reset_expires = $2 WHERE id = $3',
             [token, now, user.id]
         );
 
-        // Criar Link
-        // OBS: req.get('host') pega automaticamente o localhost:3000 ou seu dominio real
         const resetUrl = `${req.protocol}://${req.get('host')}/resetar-senha/${token}`;
 
-        // Enviar E-mail
-        const mailOptions = {
+        await transporter.sendMail({
             from: process.env.EMAIL_USER,
             to: user.email,
             subject: 'Redefinição de Senha - KuandaShop',
             html: `
                 <div style="font-family: sans-serif; padding: 20px; color: #333;">
-                    <h2>Olá, ${user.nome.split(' ')[0]}</h2>
-                    <p>Recebemos um pedido para redefinir a senha da sua conta no KuandaShop.</p>
-                    <p>Clique no botão abaixo para criar uma nova senha:</p>
-                    <a href="${resetUrl}" style="background-color: #E31C25; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Redefinir Minha Senha</a>
-                    <p style="margin-top: 20px; font-size: 12px; color: #777;">Link válido por 1 hora. Se não foi você, ignore este e-mail.</p>
+                    <h2>Redefinição de Senha</h2>
+                    <p>Clique abaixo para criar uma nova senha:</p>
+                    <a href="${resetUrl}" style="background-color: #E31C25; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Redefinir Senha</a>
                 </div>
             `
-        };
-
-        await transporter.sendMail(mailOptions);
-
-        req.flash('success', 'E-mail enviado! Verifique sua caixa de entrada (e spam).');
-        
-        // Importante: Salvar a sessão antes de redirecionar para garantir que a flash message apareça
-        req.session.save(() => {
-            res.redirect('/login');
         });
 
+        req.flash('success', 'Link enviado! Verifique seu e-mail.');
+        return req.session.save(() => res.redirect('/login?success=email_enviado'));
+
     } catch (error) {
-        console.error('Erro no envio de e-mail:', error);
-        req.flash('error', 'Erro técnico ao enviar e-mail. Tente novamente.');
-        res.redirect('/recuperar-senha');
+        console.error('Erro Recuperação:', error);
+        req.flash('error', 'Erro ao enviar e-mail.');
+        return req.session.save(() => res.redirect('/recuperar-senha'));
     }
 });
 
-// 3. TELA: Definir Nova Senha (Ao clicar no e-mail)
+// 3. TELA: Definir Nova Senha
 app.get('/resetar-senha/:token', async (req, res) => {
     const { token } = req.params;
-
     try {
-        // Verifica se o token é válido e não expirou
         const user = await db.query(
             'SELECT * FROM usuarios WHERE reset_token = $1 AND reset_expires > $2',
             [token, new Date()]
         );
 
         if (user.rows.length === 0) {
-            req.flash('error', 'Link de recuperação inválido ou expirado. Solicite um novo.');
-            return res.redirect('/recuperar-senha');
+            req.flash('error', 'Link inválido ou expirado.');
+            return req.session.save(() => res.redirect('/recuperar-senha?error=link_invalido'));
         }
 
-        // Renderiza a tela de nova senha
-        res.render('auth/resetar', { 
-            title: 'Nova Senha', 
-            token: token // Passamos o token para o formulário
-        });
-
+        const messages = res.locals.messages || req.flash();
+        res.render('auth/resetar', { title: 'Nova Senha', token, messages });
     } catch (error) {
         console.error(error);
         res.redirect('/login');
     }
 });
 
-// 4. AÇÃO: Salvar a Nova Senha
+// 4. AÇÃO: Salvar Nova Senha
 app.post('/resetar-senha/:token', async (req, res) => {
     const { token } = req.params;
     const { senha, confirmar_senha } = req.body;
 
     try {
-        // Validação básica
         if (senha !== confirmar_senha) {
             req.flash('error', 'As senhas não coincidem.');
-            return res.redirect(`/resetar-senha/${token}`);
+            return req.session.save(() => res.redirect('back'));
         }
         if (senha.length < 6) {
-            req.flash('error', 'A senha deve ter no mínimo 6 caracteres.');
-            return res.redirect(`/resetar-senha/${token}`);
+            req.flash('error', 'Senha muito curta (mínimo 6).');
+            return req.session.save(() => res.redirect('back'));
         }
 
-        // Verifica token novamente para segurança
         const userResult = await db.query(
             'SELECT * FROM usuarios WHERE reset_token = $1 AND reset_expires > $2',
             [token, new Date()]
         );
 
         if (userResult.rows.length === 0) {
-            req.flash('error', 'Link expirado ou inválido. Solicite novamente.');
-            return res.redirect('/recuperar-senha');
+            req.flash('error', 'Link expirado.');
+            return req.session.save(() => res.redirect('/recuperar-senha'));
         }
 
         const user = userResult.rows[0];
-
-        // Criptografar nova senha
         const hashedPassword = await bcrypt.hash(senha, 10);
 
-        // Atualizar no banco e limpar o token
         await db.query(
             'UPDATE usuarios SET senha = $1, reset_token = NULL, reset_expires = NULL WHERE id = $2',
             [hashedPassword, user.id]
         );
 
-        req.flash('success', 'Senha alterada com sucesso! Faça login agora.');
-        req.session.save(() => {
-            res.redirect('/login');
-        });
+        req.flash('success', 'Senha alterada com sucesso! Faça login.');
+        return req.session.save(() => res.redirect('/login?success=senha_redefinida'));
 
     } catch (error) {
-        console.error('Erro ao resetar senha:', error);
-        req.flash('error', 'Erro ao salvar nova senha.');
+        console.error('Erro Reset:', error);
+        req.flash('error', 'Erro ao salvar senha.');
         res.redirect('/login');
     }
 });
