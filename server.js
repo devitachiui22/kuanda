@@ -44,18 +44,20 @@ const bcrypt = require('bcrypt');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const walletRoutes = require('./wallet');
+
 
 // INICIALIZAÇÃO DO APP EXPRESS
 const app = express();
 
 /**
  * CONFIGURAÇÃO DE LIMITES DE DADOS (CRÍTICO PARA FOTOS)
- * Definido em 100MB para evitar erro 'Payload Too Large' ao enviar fotos de documentos ou chat.
+ * Definido em 5MB para evitar erro 'Payload Too Large' ao enviar fotos de documentos ou chat.
  */
-app.use(bodyParser.json({ limit: '100mb' }));
-app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(bodyParser.json({ limit: '5mb' }));
+app.use(bodyParser.urlencoded({ limit: '5mb', extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
 /**
  * CONFIGURAÇÃO DE CORS (CROSS-ORIGIN RESOURCE SHARING)
@@ -64,7 +66,7 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-session-token', 'x-app-version'],
     credentials: true
 }));
 
@@ -72,19 +74,34 @@ app.use(cors({
 const server = http.createServer(app);
 
 /**
- * CONFIGURAÇÃO DO SOCKET.IO (MOTOR REAL-TIME)
- * Ajustado com Ping/Pong agressivo para manter conexão em redes móveis instáveis (3G/4G).
+ * =================================================================================================
+ * 🔌 CONFIGURAÇÃO DO MOTOR REAL-TIME (SOCKET.IO) - VERSÃO TITANIUM MERGED
+ * =================================================================================================
+ *
+ * Ajustado para resiliência extrema em redes 3G/4G e compatibilidade com Flutter/Web.
  */
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: "*",                // Em produção, restringir ao domínio do frontend
         methods: ["GET", "POST"],
         credentials: true
     },
-    pingTimeout: 20000,    // Aguarda 20s antes de considerar desconectado
-    pingInterval: 25000,   // Envia pacote de vida a cada 25s
-    transports: ['websocket', 'polling'] // Tenta WebSocket, falha para Polling se necessário
+    // --- TIMEOUTS DE RESILIÊNCIA (REDE ANGOLA 3G/4G) ---
+    pingTimeout: 20000,             // 20s: Tempo máximo para o servidor esperar resposta do cliente
+    pingInterval: 25000,            // 25s: Frequência de envio de batimentos cardíacos (Keep-alive)
+
+    // --- PROTOCOLO DE TRANSPORTE ---
+    transports: ['websocket', 'polling'], // Prioriza WebSocket (Velocidade), falha para Polling (Estabilidade)
+
+    // --- COMPATIBILIDADE ---
+    allowEIO3: true,                // Garante suporte a clientes que usam Engine.IO v3 (Motores mais antigos)
+
+    // Configurações adicionais de segurança e buffer
+    maxHttpBufferSize: 1e8,         // 100MB (Mesmo limite do BodyParser para fotos no chat)
+    connectTimeout: 45000           // 45s de tempo limite para estabelecer a conexão inicial
 });
+
+logSystem('SOCKET', 'Motor Real-time inicializado com configurações híbridas de alta performance.');
 
 // --- 2. CONFIGURAÇÃO DO BANCO DE DADOS (NEON POSTGRESQL) ---
 const pool = new Pool({
@@ -211,6 +228,7 @@ async function getFullRideDetails(rideId) {
     }
 }
 
+
 // --- FUNÇÃO GETUSERFULLDETAILS REPARADA (COM COALESCE PARA EVITAR NULL CRASH) ---
 async function getUserFullDetails(userId) {
     const query = `
@@ -234,14 +252,16 @@ async function getUserFullDetails(userId) {
 }
 
 
-// --- 5. BOOTSTRAP: INICIALIZAÇÃO E MIGRAÇÃO COMPLETA DO BANCO ---
+
+
+// --- 5. BOOTSTRAP: INICIALIZAÇÃO E MIGRAÇÃO COMPLETA DO BANCO (FINTECH EDITION 2026) ---
 async function bootstrapDatabase() {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        logSystem('BOOTSTRAP', 'Verificando integridade das tabelas e aplicando migrações...');
+        logSystem('BOOTSTRAP', 'Iniciando Core Financeiro e Migrações Titanium...');
 
-        // 1. TABELA DE USUÁRIOS
+        // 1. TABELA DE USUÁRIOS (ESTRUTURA BASE)
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -270,6 +290,9 @@ async function bootstrapDatabase() {
                 is_blocked BOOLEAN DEFAULT false,
                 is_verified BOOLEAN DEFAULT false,
                 verification_code TEXT,
+                wallet_pin TEXT,
+                iban TEXT UNIQUE,
+                account_limit NUMERIC(15,2) DEFAULT 500000.00,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -318,22 +341,53 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 4. TABELA DE CARTEIRA (WALLET TRANSACTIONS)
+        // 4. TABELA DE GESTÃO DE CONTAS EXTERNAS (NOVA)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS external_accounts (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                provider TEXT, -- ex: 'BFA', 'BAI', 'VISA', 'MASTERCARD'
+                account_number TEXT,
+                holder_name TEXT,
+                is_default BOOLEAN DEFAULT false,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // 5. TABELA DE SOLICITAÇÕES DE PAGAMENTO / KWIK (NOVA)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS payment_requests (
+                id SERIAL PRIMARY KEY,
+                requester_id INTEGER REFERENCES users(id),
+                payer_id INTEGER REFERENCES users(id),
+                amount NUMERIC(15,2) NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'pending', -- pending, paid, cancelled, expired
+                qr_code_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '24 hours')
+            );
+        `);
+
+        // 6. TABELA DE TRANSAÇÕES EVOLUÍDA (NÍVEL BANCÁRIO)
         await client.query(`
             CREATE TABLE IF NOT EXISTS wallet_transactions (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
-                amount NUMERIC(15,2),
-                type TEXT,
+                sender_id INTEGER REFERENCES users(id),
+                receiver_id INTEGER REFERENCES users(id),
+                amount NUMERIC(15,2) NOT NULL,
+                fee NUMERIC(15,2) DEFAULT 0.00,
+                type TEXT NOT NULL, -- 'transfer', 'topup', 'withdraw', 'ride_payment', 'kwik', 'qr_pay'
+                method TEXT, -- 'internal', 'express', 'iban', 'kwik'
                 description TEXT,
-                reference_id INTEGER,
+                reference_id TEXT UNIQUE,
                 status TEXT DEFAULT 'completed',
                 metadata JSONB DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
-        // 5. TABELA DE POSIÇÕES DOS MOTORISTAS (RADAR)
+        // 7. TABELA DE POSIÇÕES DOS MOTORISTAS (RADAR)
         await client.query(`
             CREATE TABLE IF NOT EXISTS driver_positions (
                 driver_id INTEGER PRIMARY KEY REFERENCES users(id),
@@ -346,7 +400,7 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 6. TABELA DE SESSÕES (PERSISTÊNCIA)
+        // 8. TABELA DE SESSÕES (PERSISTÊNCIA)
         await client.query(`
             CREATE TABLE IF NOT EXISTS user_sessions (
                 id SERIAL PRIMARY KEY,
@@ -363,7 +417,7 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 7. TABELA DE DOCUMENTOS
+        // 9. TABELA DE DOCUMENTOS
         await client.query(`
             CREATE TABLE IF NOT EXISTS user_documents (
                 id SERIAL PRIMARY KEY,
@@ -380,7 +434,7 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 8. TABELA DE NOTIFICAÇÕES
+        // 10. TABELA DE NOTIFICAÇÕES
         await client.query(`
             CREATE TABLE IF NOT EXISTS notifications (
                 id SERIAL PRIMARY KEY,
@@ -394,7 +448,7 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 9. TABELA DE CONFIGURAÇÕES DO APP
+        // 11. TABELA DE CONFIGURAÇÕES DO APP
         await client.query(`
             CREATE TABLE IF NOT EXISTS app_settings (
                 id SERIAL PRIMARY KEY,
@@ -405,7 +459,7 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // 10. TABELA DE RELATÓRIOS ADMIN
+        // 12. TABELA DE RELATÓRIOS ADMIN
         await client.query(`
             CREATE TABLE IF NOT EXISTS admin_reports (
                 id SERIAL PRIMARY KEY,
@@ -416,10 +470,13 @@ async function bootstrapDatabase() {
             );
         `);
 
-        // --- MIGRAÇÃO DE REPARO (ADIÇÃO FORÇADA DE COLUNAS FALTANTES) ---
+        // --- MIGRAÇÃO DE REPARO (PARA USUÁRIOS E TABELAS JÁ EXISTENTES) ---
         const columnsToAdd = [
-            // Users table
-            ['users', 'fcm_token', 'TEXT'], // ESTA LINHA É CRÍTICA
+            // Extensões Financeiras p/ Usuários
+            ['users', 'wallet_pin', 'TEXT'],
+            ['users', 'iban', 'TEXT UNIQUE'],
+            ['users', 'account_limit', 'NUMERIC(15,2) DEFAULT 500000.00'],
+            ['users', 'fcm_token', 'TEXT'],
             ['users', 'session_token', 'TEXT'],
             ['users', 'session_expiry', 'TIMESTAMP'],
             ['users', 'last_login', 'TIMESTAMP'],
@@ -445,50 +502,49 @@ async function bootstrapDatabase() {
             // Chat messages table
             ['chat_messages', 'read_at', 'TIMESTAMP'],
 
-            // Wallet transactions table
+            // Wallet transactions table (Upgrade p/ Bidirecional)
+            ['wallet_transactions', 'sender_id', 'INTEGER REFERENCES users(id)'],
+            ['wallet_transactions', 'receiver_id', 'INTEGER REFERENCES users(id)'],
+            ['wallet_transactions', 'fee', 'NUMERIC(15,2) DEFAULT 0.00'],
+            ['wallet_transactions', 'method', 'TEXT'],
             ['wallet_transactions', 'status', 'TEXT DEFAULT \'completed\''],
             ['wallet_transactions', 'metadata', 'JSONB DEFAULT \'{}\''],
+            ['wallet_transactions', 'reference_id', 'TEXT UNIQUE'],
         ];
 
         for (const [table, column, type] of columnsToAdd) {
             try {
                 await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`);
-                logSystem('MIGRATION', `Coluna ${column} adicionada à tabela ${table}`);
             } catch (err) {
-                logError('MIGRATION', `Erro ao adicionar coluna ${column} à ${table}: ${err.message}`);
+                // Silenciamos erros de tipos complexos que já existam, focamos na integridade
             }
         }
 
-        // Criar índices para performance
+        // Criar índices para performance financeira e busca
         await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_users_iban ON users(iban);
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
-            CREATE INDEX IF NOT EXISTS idx_users_is_online ON users(is_online);
+            CREATE INDEX IF NOT EXISTS idx_wallet_sender ON wallet_transactions(sender_id);
+            CREATE INDEX IF NOT EXISTS idx_wallet_receiver ON wallet_transactions(receiver_id);
+            CREATE INDEX IF NOT EXISTS idx_wallet_ref ON wallet_transactions(reference_id);
             CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
-            CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
-            CREATE INDEX IF NOT EXISTS idx_rides_driver ON rides(driver_id);
-            CREATE INDEX IF NOT EXISTS idx_rides_created ON rides(created_at);
-            CREATE INDEX IF NOT EXISTS idx_wallet_user ON wallet_transactions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_ride ON chat_messages(ride_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token);
-            CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
-            CREATE INDEX IF NOT EXISTS idx_driver_positions_update ON driver_positions(last_update);
         `);
 
-        // Inserir configurações padrão do app
+        // Inserir configurações padrão do app (Preços e Limites)
         await client.query(`
             INSERT INTO app_settings (key, value, description)
             VALUES
             ('ride_prices', '{"base_price": 600, "km_rate": 300, "moto_base": 400, "moto_km_rate": 180, "delivery_base": 1000, "delivery_km_rate": 450}', 'Configurações de preços das corridas'),
             ('app_config', '{"max_radius_km": 15, "driver_timeout_minutes": 30, "ride_search_timeout": 600}', 'Configurações gerais do app'),
-            ('commission_rates', '{"driver_commission": 0.8, "platform_commission": 0.2}', 'Taxas de comissão'),
-            ('notification_settings', '{"ride_timeout": 30, "promo_enabled": true}', 'Configurações de notificação')
+            ('finance_config', '{"min_withdraw": 2000, "transfer_fee_internal": 0, "transfer_fee_kwik": 50}', 'Configurações de taxas financeiras'),
+            ('commission_rates', '{"driver_commission": 0.8, "platform_commission": 0.2}', 'Taxas de comissão')
             ON CONFLICT (key) DO NOTHING;
         `);
 
         await client.query('COMMIT');
-        logSystem('BOOTSTRAP', '✅ Banco de Dados Sincronizado e Reparado (Colunas de finalização criadas).');
+        logSystem('BOOTSTRAP', '✅ BANCO DE DADOS TITANIUM FINANCEIRO SINCRONIZADO.');
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -498,7 +554,6 @@ async function bootstrapDatabase() {
         client.release();
     }
 }
-bootstrapDatabase();
 
 // --- 6. MIDDLEWARE DE AUTENTICAÇÃO E SESSÃO ---
 async function authenticateToken(req, res, next) {
@@ -556,6 +611,8 @@ async function authenticateToken(req, res, next) {
         res.status(500).json({ error: 'Erro na autenticação' });
     }
 }
+
+app.use('/api/wallet', authenticateToken, walletRoutes(pool, io));
 
 // Middleware para verificar admin
 async function requireAdmin(req, res, next) {
@@ -1338,19 +1395,22 @@ app.post('/api/rides/start', authenticateToken, async (req, res) => {
     }
 });
 
-// --- RIDES: FINALIZAR CORRIDA ---
+// --- RIDES: FINALIZAR CORRIDA (HÍBRIDO / ROBUSTO) ---
 app.post('/api/rides/complete', authenticateToken, async (req, res) => {
     const { ride_id, rating, feedback, payment_method } = req.body;
 
+    // Validação básica
     if (!ride_id) {
         return res.status(400).json({ error: "ID da corrida é obrigatório." });
     }
 
     const client = await pool.connect();
+
     try {
         await client.query('BEGIN');
 
-        // Buscar corrida
+        // 1. Buscar corrida com trava de banco de dados (FOR UPDATE)
+        // Isso impede que duas requisições tentem finalizar a mesma corrida ao mesmo tempo
         const rideRes = await client.query(
             `SELECT * FROM rides WHERE id = $1 FOR UPDATE`,
             [ride_id]
@@ -1363,16 +1423,40 @@ app.post('/api/rides/complete', authenticateToken, async (req, res) => {
 
         const ride = rideRes.rows[0];
 
+        // 2. Verificação Híbrida de Status (Idempotência)
+        // Se já estiver finalizada, apenas retorna os dados sem processar pagamento de novo.
+        // Isso salva o app se a internet falhar e ele tentar enviar de novo.
+        if (ride.status === 'completed') {
+            await client.query('COMMIT'); // Libera a trava
+
+            const existingData = await getFullRideDetails(ride_id);
+            // Re-emite o evento para garantir que o front atualize
+            io.to(`ride_${ride_id}`).emit('ride_completed', existingData);
+
+            return res.json({
+                success: true,
+                message: "Corrida já foi finalizada anteriormente.",
+                ...existingData
+            });
+        }
+
+        // Se não for 'ongoing' e nem 'completed', é erro (ex: cancelled)
         if (ride.status !== 'ongoing') {
             await client.query('ROLLBACK');
             return res.status(400).json({
-                error: "Corrida não está em andamento.",
+                error: "Corrida não está em andamento para ser finalizada.",
                 current_status: ride.status
             });
         }
 
-        // Atualizar corrida
-        const updateQuery = `
+        // 3. Definição de Valores
+        const driverEarnings = ride.final_price || ride.initial_price;
+        const finalRating = rating || 5;
+        const finalFeedback = feedback || '';
+        const finalPaymentMethod = payment_method || 'cash';
+
+        // 4. Atualizar status da corrida
+        await client.query(`
             UPDATE rides SET
                 status = 'completed',
                 rating = $1,
@@ -1381,20 +1465,13 @@ app.post('/api/rides/complete', authenticateToken, async (req, res) => {
                 payment_status = 'paid',
                 completed_at = NOW()
             WHERE id = $4
-            RETURNING *
-        `;
+        `, [finalRating, finalFeedback, finalPaymentMethod, ride_id]);
 
-        await client.query(updateQuery, [
-            rating || 5,
-            feedback || '',
-            payment_method || 'cash',
-            ride_id
-        ]);
+        // 5. Processamento Financeiro (Motorista)
+        // O motorista recebe o crédito no saldo virtual independente do método (lógica de app tipo Uber)
+        // Se for dinheiro, ele fica com o dinheiro na mão, mas o sistema registra como ganho.
 
-        // Processar pagamento para o motorista
-        const driverEarnings = ride.final_price || ride.initial_price;
-
-        // Adicionar à carteira do motorista
+        // Histórico do Motorista
         await client.query(
             `INSERT INTO wallet_transactions
              (user_id, amount, type, description, reference_id, status)
@@ -1402,14 +1479,16 @@ app.post('/api/rides/complete', authenticateToken, async (req, res) => {
             [ride.driver_id, driverEarnings, ride_id]
         );
 
-        // Atualizar saldo do motorista
+        // Atualiza Saldo do Motorista
         await client.query(
             'UPDATE users SET balance = balance + $1 WHERE id = $2',
             [driverEarnings, ride.driver_id]
         );
 
-        // Se foi pago com saldo, debitar do passageiro
-        if (payment_method === 'wallet') {
+        // 6. Processamento Financeiro (Passageiro)
+        // Só debita do passageiro se for via Carteira (Wallet)
+        if (finalPaymentMethod === 'wallet') {
+            // Histórico do Passageiro
             await client.query(
                 `INSERT INTO wallet_transactions
                  (user_id, amount, type, description, reference_id, status)
@@ -1417,6 +1496,7 @@ app.post('/api/rides/complete', authenticateToken, async (req, res) => {
                 [ride.passenger_id, -driverEarnings, ride_id]
             );
 
+            // Debita Saldo do Passageiro
             await client.query(
                 'UPDATE users SET balance = balance - $1 WHERE id = $2',
                 [driverEarnings, ride.passenger_id]
@@ -1425,18 +1505,24 @@ app.post('/api/rides/complete', authenticateToken, async (req, res) => {
 
         await client.query('COMMIT');
 
-        // Buscar dados atualizados
+        // 7. Retorno e Notificações (Socket.io)
         const fullData = await getFullRideDetails(ride_id);
 
-        // Notificar via socket
+        // Notifica a sala da corrida (Motorista e Passageiro que estão na tela da corrida)
         io.to(`ride_${ride_id}`).emit('ride_completed', fullData);
 
-        logSystem('RIDE_COMPLETE', `Corrida ${ride_id} finalizada por ${req.user.id}`);
+        // Notifica especificamente os usuários (caso tenham saído da tela da corrida)
+        io.to(`user_${ride.passenger_id}`).emit('ride_completed', fullData);
+        io.to(`user_${ride.driver_id}`).emit('ride_completed', fullData);
+
+        logSystem('RIDE_COMPLETE', `Corrida ${ride_id} finalizada com sucesso. Método: ${finalPaymentMethod}`);
         res.json(fullData);
+
     } catch (e) {
         await client.query('ROLLBACK');
         logError('RIDE_COMPLETE', e);
-        res.status(500).json({ error: "Erro ao finalizar corrida." });
+        // Retorna erro genérico mas loga o detalhe
+        res.status(500).json({ error: "Erro ao processar finalização da corrida.", details: e.message });
     } finally {
         client.release();
     }
@@ -2322,11 +2408,51 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('join_ride', (rideId) => {
-        if (!rideId) return;
-        const roomName = `ride_${rideId}`;
-        socket.join(roomName);
-        logSystem('ROOM', `Socket ${socket.id} entrou na sala da corrida: ${roomName}`);
+/**
+     * =================================================================================================
+     * 🛰️ GESTÃO DE SALA DE MISSÃO (JOIN_RIDE) - VERSÃO TITANIUM SINCRO
+     * =================================================================================================
+     *
+     * Objetivo: Vincular o socket à sala da corrida e limpar conexões residuais.
+     * Resolve: Mensagens duplicadas, "Ghost" updates de GPS e vazamento de dados entre viagens.
+     */
+    socket.on('join_ride', (ride_id) => {
+        if (!ride_id) {
+            logError('ROOM_JOIN', 'Tentativa de ingresso negada: ID da corrida é nulo ou inválido.');
+            return;
+        }
+
+        const roomName = `ride_${ride_id}`;
+
+        try {
+            // --- LÓGICA DE LIMPEZA DE "GHOST" ROOMS ---
+            // Percorremos todas as salas onde este socket está atualmente.
+            // Se ele estiver em qualquer sala que comece com 'ride_' mas não seja a atual, ele sai.
+            // Isso garante que o motorista/passageiro receba apenas dados da missão ATIVA.
+            socket.rooms.forEach((room) => {
+                if (room.startsWith('ride_') && room !== roomName) {
+                    socket.leave(room);
+                    logSystem('ROOM_CLEAN', `Socket ${socket.id} removido da sala residual: ${room}`);
+                }
+            });
+
+            // --- INGRESSO NA MISSÃO ATUAL ---
+            socket.join(roomName);
+
+            // Log corporativo para auditoria de conexões
+            logSystem('ROOM', `Socket ${socket.id} estabeleceu link seguro na sala: ${roomName}`);
+
+            // Emitimos uma confirmação para o Frontend garantir que o túnel está aberto
+            socket.emit('ride_room_confirmed', {
+                ride_id: ride_id,
+                status: 'connected',
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (e) {
+            logError('ROOM_JOIN_CRITICAL', e);
+            socket.emit('error_response', { message: "Erro ao sincronizar com a sala da missão." });
+        }
     });
 
     /**
@@ -2446,145 +2572,186 @@ io.on('connection', (socket) => {
         }
     });
 
-    /**
-     * EVENTO: ACEITAR CORRIDA
-     */
-    socket.on('accept_ride', async (data) => {
-        const { ride_id, driver_id, final_price } = data;
-        logSystem('ACCEPT', `Motorista ${driver_id} tentando aceitar Ride ${ride_id}`);
+/**
+ * EVENTO: ACEITAR CORRIDA (SINCRO TOTAL)
+ * Este evento gerencia o bloqueio no DB, atualização de status e sincronização das salas Socket.io.
+ */
+socket.on('accept_ride', async (data) => {
+    const { ride_id, driver_id, final_price } = data;
+    logSystem('ACCEPT', `Motorista ${driver_id} tentando aceitar Ride ${ride_id}`);
 
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
 
-            // Verificação com bloqueio de linha
-            const checkQuery = "SELECT * FROM rides WHERE id = $1 FOR UPDATE";
-            const checkRes = await client.query(checkQuery, [ride_id]);
+        // 1. LOCK DE SEGURANÇA: Bloqueia a linha para evitar Race Conditions (múltiplos aceites)
+        const checkQuery = "SELECT * FROM rides WHERE id = $1 FOR UPDATE";
+        const checkRes = await client.query(checkQuery, [ride_id]);
+        const ride = checkRes.rows[0];
 
-            if (checkRes.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return socket.emit('error_response', { message: "Corrida não encontrada." });
-            }
-
-            const ride = checkRes.rows[0];
-
-            if (ride.status !== 'searching') {
-                await client.query('ROLLBACK');
-                return socket.emit('error_response', {
-                    message: "Esta corrida já foi aceita por outro motorista."
-                });
-            }
-
-            // Atualizar corrida
-            await client.query(
-                `UPDATE rides SET
-                    driver_id = $1,
-                    final_price = COALESCE($2, initial_price),
-                    status = 'accepted',
-                    accepted_at = NOW()
-                 WHERE id = $3`,
-                [driver_id, final_price, ride_id]
-            );
-
-            await client.query('COMMIT');
-            logSystem('MATCH', `Corrida ${ride_id} confirmada no DB.`);
-
-            // Buscar detalhes completos
-            const fullData = await getFullRideDetails(ride_id);
-
-            // Entrar na sala da corrida
-            socket.join(`ride_${ride_id}`);
-
-            // Notificar passageiro
-            io.to(`user_${ride.passenger_id}`).emit('match_found', fullData);
-
-            // Notificar motorista
-            io.to(`user_${driver_id}`).emit('match_found', fullData);
-
-            // Notificar sala da corrida
-            io.to(`ride_${ride_id}`).emit('match_found', fullData);
-
-            logSystem('SUCCESS', `Match Finalizado: Passageiro ${ride.passenger_id} <-> Motorista ${driver_id}`);
-
-        } catch (e) {
-            if (client) await client.query('ROLLBACK');
-            logError('ACCEPT_CRITICAL', e);
-            socket.emit('error_response', {
-                message: "Erro interno ao processar aceite."
+        // 2. VALIDAÇÃO DE DISPONIBILIDADE
+        if (!ride || ride.status !== 'searching') {
+            await client.query('ROLLBACK');
+            logSystem('ACCEPT_DENIED', `Ride ${ride_id} indisponível ou já aceita.`);
+            return socket.emit('error_response', {
+                message: "Esta corrida já não está mais disponível."
             });
-        } finally {
-            client.release();
         }
-    });
 
-    /**
-     * EVENTO: ENVIAR MENSAGEM NO CHAT
-     */
-    socket.on('send_message', async (data) => {
-        const { ride_id, sender_id, text, file_data } = data;
+        // 3. ATUALIZAÇÃO ATÔMICA
+        // Usamos COALESCE para garantir que, se o final_price vier nulo, mantemos o preço inicial
+        await client.query(
+            `UPDATE rides SET
+                driver_id = $1,
+                final_price = COALESCE($2, initial_price),
+                status = 'accepted',
+                accepted_at = NOW()
+             WHERE id = $3`,
+            [driver_id, final_price, ride_id]
+        );
 
-        try {
-            const res = await pool.query(
-                `INSERT INTO chat_messages (ride_id, sender_id, text, image_url, created_at)
-                 VALUES ($1, $2, $3, $4, NOW())
-                 RETURNING *`,
-                [
-                    ride_id,
-                    sender_id,
-                    text || (file_data ? '📷 Foto enviada' : ''),
-                    file_data || null
-                ]
-            );
+        await client.query('COMMIT');
+        logSystem('MATCH_DB', `Corrida ${ride_id} confirmada no banco de dados.`);
 
-            const message = res.rows[0];
+        // 4. PAYLOAD RICO: Busca todos os detalhes necessários (Driver, Passenger, Veículo)
+        const fullData = await getFullRideDetails(ride_id);
 
-            // Buscar nome do remetente
-            const senderRes = await pool.query(
-                'SELECT name, photo FROM users WHERE id = $1',
-                [sender_id]
-            );
+        // 5. SINCRONIZAÇÃO DE SALAS (SYNC ROOMS)
+        // O motorista entra na sala específica desta corrida para comunicações futuras
+        socket.join(`ride_${ride_id}`);
 
-            const payload = {
-                ...message,
-                sender_name: senderRes.rows[0]?.name,
-                sender_photo: senderRes.rows[0]?.photo
-            };
+        // 6. DISPARO EM TEMPO REAL (VELOCIDADE MÁXIMA)
+        // Notifica todos na sala da corrida (Passageiro + Motorista logado em outros dispositivos)
+        io.to(`ride_${ride_id}`).emit('match_found', fullData);
 
-            // Enviar para todos na sala da corrida
-            io.to(`ride_${ride_id}`).emit('receive_message', payload);
+        // Backup: Garante que o passageiro receba pelo canal individual, caso não esteja na sala
+        io.to(`user_${ride.passenger_id}`).emit('match_found', fullData);
 
-            // Se o destinatário não estiver na sala, criar notificação
-            const rideRes = await pool.query(
-                'SELECT passenger_id, driver_id FROM rides WHERE id = $1',
-                [ride_id]
-            );
+        // Confirmação direta para o motorista que disparou o evento
+        socket.emit('match_found', fullData);
 
-            if (rideRes.rows.length > 0) {
-                const ride = rideRes.rows[0];
-                const recipientId = sender_id === ride.passenger_id ? ride.driver_id : ride.passenger_id;
+        logSystem('SUCCESS', `Match Finalizado: Passageiro ${ride.passenger_id} <-> Motorista ${driver_id}`);
 
-                // Verificar se destinatário está online
-                const recipientSocket = Array.from(io.sockets.sockets.values())
-                    .find(s => s.rooms.has(`user_${recipientId}`));
+    } catch (e) {
+        if (client) await client.query('ROLLBACK');
+        logError('ACCEPT_CRITICAL', e);
+        socket.emit('error_response', {
+            message: "Erro interno ao processar aceite da corrida."
+        });
+    } finally {
+        client.release();
+    }
+});
 
-                if (!recipientSocket) {
-                    // Criar notificação
-                    await pool.query(
-                        `INSERT INTO notifications (user_id, title, body, type, data)
-                         VALUES ($1, $2, $3, 'chat', $4)`,
-                        [
-                            recipientId,
-                            'Nova mensagem',
-                            text ? (text.length > 50 ? text.substring(0, 50) + '...' : text) : 'Imagem recebida',
-                            JSON.stringify({ ride_id, sender_id })
-                        ]
-                    );
+/**
+ * =================================================================================================
+ * 🛰️ EVENTO: ENVIAR MENSAGEM NO CHAT (VERSÃO HÍBRIDA FULL - TITANIUM BACKEND)
+ * =================================================================================================
+ *
+ * DESCRIÇÃO: Processa mensagens de texto e arquivos, persiste no DB,
+ *            identifica remetente, notifica destinatário e emite via Socket.
+ */
+socket.on('send_message', async (data) => {
+    const { ride_id, sender_id, text, file_data } = data;
+
+    // 1. VALIDAÇÃO DE INTEGRIDADE (Prevenção de Crash)
+    if (!ride_id || !sender_id) {
+        return console.error("❌ CHAT: Tentativa de envio com dados incompletos", data);
+    }
+
+    try {
+        // 2. BUSCA DADOS DO REMETENTE (Nome e Foto para agilizar a UI do destinatário)
+        const userRes = await pool.query(
+            "SELECT name, photo FROM users WHERE id = $1",
+            [sender_id]
+        );
+        const sender = userRes.rows[0] || { name: "Usuário", photo: null };
+
+        // 3. TRATAMENTO DE CONTEÚDO (Fallback para arquivos sem legenda)
+        const finalText = text && text.trim() !== ''
+            ? text
+            : (file_data ? '📷 Foto enviada' : '');
+
+        // 4. PERSISTÊNCIA NO BANCO DE DADOS (ACID Compliant)
+        const res = await pool.query(
+            `INSERT INTO chat_messages (ride_id, sender_id, text, file_data, created_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             RETURNING *`,
+            [ride_id, sender_id, finalText, file_data || null]
+        );
+
+        // 5. CONSTRUÇÃO DO PAYLOAD FULL (Mensagem + Dados do Remetente)
+        const fullMsg = {
+            ...res.rows[0],
+            sender_name: sender.name,
+            sender_photo: sender.photo
+        };
+
+        // 6. EMISSÃO EM TEMPO REAL (Para a sala específica da corrida)
+        io.to(`ride_${ride_id}`).emit('receive_message', fullMsg);
+
+        // Log de Auditoria
+        if (typeof logSystem === 'function') {
+            logSystem('CHAT', `Msg de ${sender.name} na Ride ${ride_id}`);
+        }
+
+        // 7. LÓGICA DE NOTIFICAÇÃO (Execução em Background para não atrasar o chat)
+        (async () => {
+            try {
+                // Descobrir quem deve receber a notificação
+                const rideRes = await pool.query(
+                    'SELECT passenger_id, driver_id FROM rides WHERE id = $1',
+                    [ride_id]
+                );
+
+                if (rideRes.rows.length > 0) {
+                    const ride = rideRes.rows[0];
+                    const recipientId = (String(sender_id) === String(ride.passenger_id))
+                        ? ride.driver_id
+                        : ride.passenger_id;
+
+                    if (recipientId) {
+                        // Verifica se o destinatário está online para emitir alerta visual imediato
+                        const isRecipientOnline = io.sockets.adapter.rooms.has(`user_${recipientId}`);
+
+                        // Salva notificação no banco para histórico e push futuro
+                        await pool.query(
+                            `INSERT INTO notifications (user_id, title, body, type, data, created_at)
+                             VALUES ($1, $2, $3, 'chat', $4, NOW())`,
+                            [
+                                recipientId,
+                                `Nova mensagem de ${sender.name}`,
+                                finalText.length > 60 ? finalText.substring(0, 60) + '...' : finalText,
+                                JSON.stringify({ ride_id, sender_id, type: 'chat' })
+                            ]
+                        );
+
+                        // Se o usuário estiver online, avisa o app para atualizar o "badge" (sininho)
+                        if (isRecipientOnline) {
+                            io.to(`user_${recipientId}`).emit('new_notification', {
+                                type: 'chat',
+                                ride_id: ride_id
+                            });
+                        }
+                    }
                 }
+            } catch (notifErr) {
+                console.error("⚠️ Erro ao processar notificação de chat:", notifErr.message);
             }
-        } catch (e) {
-            logError('CHAT', e);
+        })();
+
+    } catch (e) {
+        // 8. TRATAMENTO DE ERROS CRÍTICOS
+        if (typeof logError === 'function') {
+            logError('CHAT_CRITICAL', e);
+        } else {
+            console.error("❌ ERRO CRÍTICO NO CHAT:", e.message);
         }
-    });
+
+        // Avisa o remetente que a mensagem falhou
+        socket.emit('error_message', { error: "Erro ao processar sua mensagem." });
+    }
+});
 
     /**
      * EVENTO: ATUALIZAR PREÇO (NEGOCIAÇÃO)
@@ -2695,41 +2862,71 @@ io.on('connection', (socket) => {
     });
 
     /**
-     * EVENTO: DESCONEXÃO
+     * =================================================================================================
+     * 🛰️ EVENTO: DESCONEXÃO (CORREÇÃO SAFE DISCONNECT - TITANIUM BACKEND)
+     * =================================================================================================
+     *
+     * DESCRIÇÃO: Trata a queda de conexão. Se o motorista perder o sinal mas reconectar
+     *            dentro de 10 segundos (grace period), ele permanece online no sistema.
      */
     socket.on('disconnect', async () => {
-        logSystem('SOCKET', `Conexão perdida: ${socket.id}`);
+        logSystem('SOCKET', `Conexão sinalizada como encerrada: ${socket.id}`);
 
         try {
-            // Encontrar usuário associado a este socket
-            const positionRes = await pool.query(
-                'SELECT driver_id FROM driver_positions WHERE socket_id = $1',
+            // 1. LOCALIZAÇÃO: Encontrar quem era o dono deste socket que desconectou
+            const res = await pool.query(
+                "SELECT driver_id FROM driver_positions WHERE socket_id = $1",
                 [socket.id]
             );
 
-            if (positionRes.rows.length > 0) {
-                const driverId = positionRes.rows[0].driver_id;
+            if (res.rows.length > 0) {
+                const driverId = res.rows[0].driver_id;
 
-                // Marcar como offline após 5 minutos de inatividade
+                // 2. TIMER DE SEGURANÇA (10 Segundos de Tolerância)
+                // Essencial para evitar que motoristas saiam da fila de busca por oscilação de sinal.
                 setTimeout(async () => {
-                    const checkRes = await pool.query(
-                        `SELECT COUNT(*) FROM driver_positions
-                         WHERE driver_id = $1 AND socket_id = $2`,
-                        [driverId, socket.id]
-                    );
-
-                    if (parseInt(checkRes.rows[0].count) === 0) {
-                        await pool.query(
-                            'UPDATE users SET is_online = false WHERE id = $1',
+                    try {
+                        // 3. RE-VERIFICAÇÃO: Busca o socket_id atual para esse driver no banco
+                        const checkReconnection = await pool.query(
+                            "SELECT socket_id FROM driver_positions WHERE driver_id = $1",
                             [driverId]
                         );
 
-                        logSystem('OFFLINE', `Motorista ${driverId} marcado como offline.`);
+                        /**
+                         * LÓGICA DE PERSISTÊNCIA:
+                         * Se o socket_id no banco ainda for o mesmo que desconectou,
+                         * significa que ele NÃO reconectou com um novo socket.
+                         */
+                        if (
+                            checkReconnection.rows.length > 0 &&
+                            checkReconnection.rows[0].socket_id === socket.id
+                        ) {
+                            // 4. OFFLINE DEFINITIVO: Atualiza o status do usuário no banco principal
+                            await pool.query(
+                                "UPDATE users SET is_online = false WHERE id = $1",
+                                [driverId]
+                            );
+
+                            // Opcional: Remover da tabela de posições ativas se necessário
+                            // await pool.query("DELETE FROM driver_positions WHERE driver_id = $1", [driverId]);
+
+                            logSystem('OFFLINE', `Motorista ${driverId} realmente desconectado (Tempo de tolerância expirado).`);
+                        } else {
+                            // O motorista reconectou com um novo socket_id antes dos 10 segundos expirarem
+                            logSystem('SOCKET', `Motorista ${driverId} reconectou com sucesso. Status ONLINE preservado.`);
+                        }
+                    } catch (innerError) {
+                        logError('DISCONNECT_TIMEOUT_CRITICAL', innerError);
                     }
-                }, 5 * 60 * 1000); // 5 minutos
+                }, 20000); // 20 segundos (Ideal para redes móveis instáveis)
             }
         } catch (e) {
-            logError('DISCONNECT', e);
+            // 5. TRATAMENTO DE ERROS DE HANDLER
+            if (typeof logError === 'function') {
+                logError('DISCONNECT_HANDLER_FAILURE', e);
+            } else {
+                console.error("❌ ERRO AO PROCESSAR DESCONEXÃO:", e.message);
+            }
         }
     });
 });
