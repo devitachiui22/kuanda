@@ -612,7 +612,7 @@ async function authenticateToken(req, res, next) {
     }
 }
 
-app.use('/api/wallet', authenticateToken, walletRoutes(pool, io));
+//app.use('/api/wallet', authenticateToken, walletRoutes(pool, io));
 
 // Middleware para verificar admin
 async function requireAdmin(req, res, next) {
