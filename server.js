@@ -44,7 +44,7 @@ const bcrypt = require('bcrypt');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const walletRoutes = require('./wallet');
+//const walletRoutes = require('./wallet');
 
 
 // INICIALIZAÇÃO DO APP EXPRESS
