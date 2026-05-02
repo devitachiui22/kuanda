@@ -1,7 +1,7 @@
 {
   "name": "kuandashop-marketplace",
   "version": "3.0.0",
-  "description": "Marketplace Multi-Vendor Angolano Completo",
+  "description": "Marketplace Multi-Vendor Angolano Completp",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,7 +14,7 @@
     "npm": ">=9.0.0"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
+    "bcrypt": "^5.1.1",
     "connect-flash": "^0.1.1",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
